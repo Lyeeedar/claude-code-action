@@ -513,7 +513,7 @@ function generateSimplePrompt(
   const imagesInfo = hasImages
     ? `\n\n<images_info>
 Images from comments have been downloaded and saved locally. Their local paths are shown inline in the content above.
-${process.env.MINIMAX_API_KEY ? `To understand each image, call the \`mcp__MiniMax__understand_image\` tool with \`image_url\` set to the local file path and a description of what you need to know. Do this BEFORE attempting to address the request.
+${process.env.MINIMAX_API_KEY ? `To understand each image, call the \`mcp__MiniMax__understand_image\` tool with \`image_source\` set to the local file path and \`prompt\` set to what you need to know. Do this BEFORE attempting to address the request.
 Image paths:
 ${imagePaths.map((p) => `- ${p}`).join("\n")}` : "Use the Read tool to view them."}
 </images_info>`
@@ -640,7 +640,7 @@ export function generateDefaultPrompt(
 
 <images_info>
 Images have been downloaded from GitHub comments and saved locally. Their file paths are shown inline in the content above.
-${process.env.MINIMAX_API_KEY ? `To understand each image, call the \`mcp__MiniMax__understand_image\` tool with \`image_url\` set to the local file path and a description of what you need to know. Do this BEFORE attempting to address the request.
+${process.env.MINIMAX_API_KEY ? `To understand each image, call the \`mcp__MiniMax__understand_image\` tool with \`image_source\` set to the local file path and \`prompt\` set to what you need to know. Do this BEFORE attempting to address the request.
 Image paths:
 ${imagePaths.map((p) => `- ${p}`).join("\n")}` : "Use the Read tool to view them."}
 </images_info>`

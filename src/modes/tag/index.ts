@@ -18,6 +18,7 @@ import { isEntityContext } from "../../github/context";
 import type { GitHubContext } from "../../github/context";
 import type { Octokits } from "../../github/api/client";
 import { parseAllowedTools } from "../agent/parse-tools";
+import { buildBaseTools } from "../shared-tools";
 
 /**
  * Prepares the tag mode execution context.
@@ -212,51 +213,17 @@ export async function prepareTagMode({
 
   const gitPushWrapper = `${process.env.GITHUB_ACTION_PATH}/scripts/git-push.sh`;
 
-  // Build claude_args for tag mode with required tools.
-  // Edit/MultiEdit/Write are intentionally omitted: acceptEdits permission mode (set below)
-  // auto-allows file edits inside $GITHUB_WORKSPACE and denies writes outside (e.g. ~/.bashrc).
-  // Listing them here would grant blanket write access to the whole runner (Asana 1213310082312048).
-  const tagModeTools = [
-    "Glob",
-    "Grep",
-    "LS",
-    "Read",
-    "mcp__github_comment__update_claude_comment",
-    "mcp__github_ci__get_ci_status",
-    "mcp__github_ci__get_workflow_run_details",
-    "mcp__github_ci__download_job_log",
-    "Bash(gh pr edit:*)",
-    "WebFetch",
-    ...userAllowedMCPTools,
-  ];
-
-  if (process.env.MINIMAX_API_KEY) {
-    tagModeTools.push("mcp__MiniMax__understand_image");
-  }
-
-  // Add git commands when using git CLI (no API commit signing, or SSH signing)
-  // SSH signing still uses git CLI, just with signing enabled
-  if (!useApiCommitSigning) {
-    tagModeTools.push(
-      "Bash(git add:*)",
-      "Bash(git commit:*)",
-      `Bash(${gitPushWrapper}:*)`,
-      "Bash(git rm:*)",
-      "Bash(git fetch:*)",
-      "Bash(git rebase:*)",
-      "Bash(git checkout:*)",
-      "Bash(git diff:*)",
-      "Bash(git status:*)",
-      "Bash(git log:*)",
-      "Bash(git stash:*)",
-    );
-  } else {
-    // When using API commit signing, use MCP file ops tools
-    tagModeTools.push(
-      "mcp__github_file_ops__commit_files",
-      "mcp__github_file_ops__delete_files",
-    );
-  }
+  const tagModeTools = buildBaseTools({
+    useApiCommitSigning,
+    gitPushWrapper,
+    userAllowedMCPTools,
+    extraTools: [
+      "mcp__github_comment__update_claude_comment",
+      "mcp__github_ci__get_ci_status",
+      "mcp__github_ci__get_workflow_run_details",
+      "mcp__github_ci__download_job_log",
+    ],
+  });
 
   // Get our GitHub MCP servers configuration
   const ourMcpConfig = await prepareMcpConfig({

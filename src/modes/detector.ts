@@ -9,9 +9,14 @@ import {
 } from "../github/context";
 import { checkContainsTrigger } from "../github/validation/trigger";
 
-export type AutoDetectedMode = "tag" | "agent";
+export type AutoDetectedMode = "tag" | "agent" | "schedule";
 
 export function detectMode(context: GitHubContext): AutoDetectedMode {
+  // Schedule mode: a workflow file is provided — runs as a background/scheduled agent
+  if (process.env.WORKFLOW_FILE) {
+    return "schedule";
+  }
+
   // Validate track_progress usage
   if (context.inputs.trackProgress) {
     validateTrackProgressEvent(context);

@@ -26,6 +26,7 @@ import type { GitHubContext } from "../github/context";
 import { detectMode } from "../modes/detector";
 import { prepareTagMode } from "../modes/tag";
 import { prepareAgentMode } from "../modes/agent";
+import { prepareScheduleMode, runPostSteps, saveAgentState } from "../modes/schedule";
 import { checkContainsTrigger } from "../github/validation/trigger";
 import { restoreConfigFromBase } from "../github/operations/restore-config";
 import { validateBranchName } from "../github/operations/branch";
@@ -41,6 +42,43 @@ import { preparePrompt } from "../../base-action/src/prepare-prompt";
 import { runClaude } from "../../base-action/src/run-claude";
 import type { ClaudeRunResult } from "../../base-action/src/run-claude-sdk";
 import { setupModelProxy } from "../../base-action/src/setup-model-proxy";
+
+/**
+ * Ensure `uv` is installed (needed for `uvx minimax-coding-plan-mcp`).
+ * No-ops if uv is already on PATH.
+ */
+async function ensureUv(): Promise<void> {
+  // Check if already available
+  const check = spawn("uv", ["--version"], { stdio: "ignore" });
+  const already = await new Promise<boolean>((resolve) => {
+    check.on("close", (code) => resolve(code === 0));
+    check.on("error", () => resolve(false));
+  });
+  if (already) return;
+
+  console.log("Installing uv...");
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(
+      "bash",
+      ["-c", "curl -LsSf https://astral.sh/uv/install.sh | sh"],
+      { stdio: "inherit" },
+    );
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`uv install failed with exit code ${code}`));
+    });
+    child.on("error", reject);
+  });
+
+  // uv installer places the binary in ~/.local/bin on Linux/macOS
+  const localBin = `${process.env.HOME}/.local/bin`;
+  const githubPath = process.env.GITHUB_PATH;
+  if (githubPath) {
+    await appendFile(githubPath, `${localBin}\n`);
+  }
+  process.env.PATH = `${localBin}:${process.env.PATH}`;
+  console.log("uv installed successfully");
+}
 
 /**
  * Install Claude Code CLI, handling retry logic and custom executable paths.
@@ -196,7 +234,9 @@ async function run() {
 
     // Check trigger conditions
     const containsTrigger =
-      modeName === "tag"
+      modeName === "schedule"
+        ? true // schedule mode always runs when workflow_file is set
+        : modeName === "tag"
         ? isEntityContext(context) && checkContainsTrigger(context)
         : !!context.inputs?.prompt;
     console.log(`Mode: ${modeName}`);
@@ -216,6 +256,13 @@ async function run() {
     const prepareResult =
       modeName === "tag"
         ? await prepareTagMode({ context, octokit, githubToken })
+        : modeName === "schedule"
+        ? await prepareScheduleMode({
+            context,
+            octokit,
+            githubToken,
+            workflowFile: process.env.WORKFLOW_FILE!,
+          })
         : await prepareAgentMode({ context, octokit, githubToken });
 
     commentId = prepareResult.commentId;
@@ -224,7 +271,12 @@ async function run() {
     draftPrUrl = "draftPrUrl" in prepareResult ? prepareResult.draftPrUrl : undefined;
     prepareCompleted = true;
 
-    // Phase 2: Install Claude Code CLI
+    // Phase 2: Install toolchain dependencies
+    if (process.env.MINIMAX_API_KEY) {
+      await ensureUv();
+    }
+
+    // Phase 2b: Install Claude Code CLI
     const claudeExecutable = await installClaudeCode();
 
     // Phase 3: Run Claude (import base-action directly)
@@ -284,9 +336,19 @@ async function run() {
       promptFile,
     });
 
+    // Non-Anthropic models (e.g. MiniMax) may call lowercase tool names like
+    // "grep" or "bash" instead of Claude Code's "Grep" / "Bash". Append a
+    // brief reminder when a third-party key is in use.
+    const toolNamingNote =
+      process.env.MINIMAX_API_KEY ||
+      process.env.XAI_API_KEY ||
+      process.env.OPENAI_API_KEY
+        ? "\n\nIMPORTANT — tool names are case-sensitive. Use Grep (not grep), Bash (not bash/shell/grep/find/cat directly), Glob (not glob), Read (not read/cat), Write (not write), Edit (not edit). Always call Bash with a command string rather than calling shell utilities as standalone tool names."
+        : "";
+
     const claudeResult: ClaudeRunResult = await runClaude(promptConfig.path, {
       claudeArgs: prepareResult.claudeArgs,
-      appendSystemPrompt: process.env.APPEND_SYSTEM_PROMPT,
+      appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote || undefined,
       model: process.env.ANTHROPIC_MODEL,
       pathToClaudeCodeExecutable: claudeExecutable,
       showFullOutput: process.env.INPUT_SHOW_FULL_OUTPUT,
@@ -294,6 +356,29 @@ async function run() {
 
     claudeSuccess = claudeResult.conclusion === "success";
     executionFile = claudeResult.executionFile;
+
+    // Run post-steps for schedule mode (always, regardless of Claude's conclusion)
+    if (
+      modeName === "schedule" &&
+      "workflow" in prepareResult &&
+      prepareResult.workflow.postSteps.length > 0
+    ) {
+      console.log(`\nRunning ${prepareResult.workflow.postSteps.length} post-step(s)...`);
+      await runPostSteps(prepareResult.workflow.postSteps);
+    }
+
+    // Save agent state back to dedicated branch
+    if (modeName === "schedule" && "taskName" in prepareResult && "stateDir" in prepareResult) {
+      try {
+        await saveAgentState(
+          prepareResult.taskName,
+          prepareResult.stateDir,
+          process.env.GITHUB_WORKSPACE || process.cwd(),
+        );
+      } catch (err) {
+        console.error(`Failed to save agent state: ${err}`);
+      }
+    }
 
     // Set action-level outputs
     if (claudeResult.executionFile) {

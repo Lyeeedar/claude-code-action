@@ -231,6 +231,8 @@ export async function prepareMcpConfig(
         env: {
           MINIMAX_API_KEY: process.env.MINIMAX_API_KEY,
           MINIMAX_API_HOST: "https://api.minimax.io",
+          // Pass PATH so the subprocess can find uvx / Python runtimes
+          PATH: process.env.PATH ?? "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         },
       };
     }

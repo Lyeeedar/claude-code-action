@@ -17,12 +17,14 @@
     "@octokit/graphql": "^8.2.2",
     "@octokit/rest": "^21.1.1",
     "@octokit/webhooks-types": "^7.6.1",
+    "js-yaml": "^4.1.0",
     "node-fetch": "^3.3.2",
     "shell-quote": "^1.8.3",
     "zod": "^3.24.4"
   },
   "devDependencies": {
     "@types/bun": "1.2.11",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.0.0",
     "@types/node-fetch": "^2.6.12",
     "@types/shell-quote": "^1.7.5",

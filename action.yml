@@ -54,6 +54,15 @@ inputs:
     default: ""
 
   # Claude Code configuration
+  workflow_file:
+    description: |
+      Path to an agent workflow file (.md) to execute in schedule mode.
+      The file uses YAML frontmatter (tools, post-steps, secrets) + a markdown body (the prompt).
+      When set, schedule mode is auto-selected and the markdown body becomes Claude's prompt.
+      Path is relative to GITHUB_WORKSPACE (the checked-out repo root).
+      Example: .github/agent-workflows/my-task.md
+    required: false
+    default: ""
   prompt:
     description: "Instructions for Claude. Can be a direct prompt or custom template."
     required: false
@@ -261,6 +270,7 @@ runs:
       env:
         # Prepare inputs
         MODE: ${{ inputs.mode }}
+        WORKFLOW_FILE: ${{ inputs.workflow_file }}
         PROMPT: ${{ inputs.prompt }}
         TRIGGER_PHRASE: ${{ inputs.trigger_phrase }}
         ASSIGNEE_TRIGGER: ${{ inputs.assignee_trigger }}

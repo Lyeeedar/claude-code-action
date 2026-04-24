@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "fs/promises";
 import { prepareMcpConfig } from "../../mcp/install-mcp-server";
 import { parseAllowedTools } from "./parse-tools";
+import { buildBaseTools } from "../shared-tools";
 import {
   configureGitAuth,
   setupSshSigning,
@@ -79,12 +80,16 @@ export async function prepareAgentMode({
     promptContent,
   );
 
-  // Parse allowed tools from user's claude_args
   const userClaudeArgs = process.env.CLAUDE_ARGS || "";
-  const allowedTools = parseAllowedTools(userClaudeArgs);
-  if (process.env.MINIMAX_API_KEY) {
-    allowedTools.push("mcp__MiniMax__understand_image");
-  }
+  const gitPushWrapper = `${process.env.GITHUB_ACTION_PATH}/scripts/git-push.sh`;
+
+  const allowedTools = buildBaseTools({
+    useApiCommitSigning,
+    gitPushWrapper,
+    userAllowedMCPTools: parseAllowedTools(userClaudeArgs).filter((t) =>
+      t.startsWith("mcp__"),
+    ),
+  });
 
   // Check for branch info from environment variables (useful for auto-fix workflows)
   const claudeBranch = process.env.CLAUDE_BRANCH || undefined;
