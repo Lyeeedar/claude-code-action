@@ -6,9 +6,18 @@ import { runClaude } from "./run-claude";
 import { setupClaudeCodeSettings } from "./setup-claude-code-settings";
 import { validateEnvironmentVariables } from "./validate-env";
 import { installPlugins } from "./install-plugins";
+import { setupModelProxy } from "./setup-model-proxy";
 
 async function run() {
   try {
+    await setupModelProxy(
+      process.env.MODEL_SMALL || process.env.MODEL_MEDIUM || "",
+      process.env.MODEL_MEDIUM || "",
+      process.env.MODEL_LARGE || process.env.MODEL_MEDIUM || "",
+      process.env.XAI_API_KEY || "",
+      process.env.OPENAI_API_KEY || "",
+    );
+
     validateEnvironmentVariables();
 
     // The composite action's "Install Claude Code" step writes the binary to

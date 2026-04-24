@@ -1,4 +1,4 @@
-name: Claude Code
+name: Agent
 
 on:
   issue_comment:
@@ -6,17 +6,20 @@ on:
   pull_request_review_comment:
     types: [created]
   issues:
-    types: [opened, assigned]
+    types: [opened, assigned, labeled]
   pull_request_review:
     types: [submitted]
 
 jobs:
-  claude:
+  agent:
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@agent')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@agent')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@agent')) ||
+      (github.event_name == 'issues' && github.event.action == 'assigned') ||
+      (github.event_name == 'issues' && github.event.action == 'labeled') ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@agent') || contains(github.event.issue.title, '@agent'))) ||
+      (github.event_name == 'pull_request_review' && endsWith(github.event.pull_request.user.login, '[bot]'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -29,11 +32,21 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Run Claude Code
-        id: claude
-        uses: anthropics/claude-code-action@main
+      - name: Run Agent
+        id: agent
+        uses: ./
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: |
-            --allowedTools "Bash(bun install),Bash(bun test:*),Bash(bun run format),Bash(bun typecheck)"
-            --model "claude-opus-4-7"
+          # Trigger configuration
+          trigger_phrase: "@agent"
+          assignee_trigger: "agent"
+          label_trigger: "agent"
+          auto_fix_pr_reviews: "true"
+          bot_name: "agent[bot]"
+
+          # Models — small uses xAI (fast), medium+large use OpenAI
+          # Claude Code uses sonnet tier (medium) for almost all work
+          model_cheap: "xai/grok-4-1-fast-non-reasoning"
+          model: "openai/GPT-5.3-Codex"
+          model_expensive: "openai/GPT-5.4"
+          xai_api_key: ${{ secrets.XAI_API_KEY }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}

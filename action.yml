@@ -64,27 +64,32 @@ inputs:
     default: ""
 
   # Auth configuration
-  anthropic_api_key:
-    description: "Anthropic API key (required for direct API, not needed for Bedrock/Vertex/Foundry)"
+  xai_api_key:
+    description: "xAI API key — required when any model spec uses the 'xai/' prefix (e.g. the small/haiku tier)."
     required: false
-  claude_code_oauth_token:
-    description: "Claude Code OAuth token (alternative to anthropic_api_key)"
+    default: ""
+  openai_api_key:
+    description: "OpenAI API key — required when any model spec uses the 'openai/' prefix (e.g. the medium and large tiers)."
     required: false
+    default: ""
   github_token:
     description: "GitHub token with repo and pull request permissions (optional if using GitHub App)"
     required: false
-  use_bedrock:
-    description: "Use Amazon Bedrock with OIDC authentication instead of direct Anthropic API"
+
+  # Model configuration — use "provider/model-name" format.
+  # Supported providers: openai, xai. Bare names default to openai.
+  model:
+    description: "Medium/primary tier model spec (sonnet equivalent — used for almost all work). Format: 'provider/model-name' e.g. 'openai/GPT-5.3-Codex'."
     required: false
-    default: "false"
-  use_vertex:
-    description: "Use Google Vertex AI with OIDC authentication instead of direct Anthropic API"
+    default: "openai/GPT-5.3-Codex"
+  model_cheap:
+    description: "Small/fast tier model spec (haiku equivalent — lightweight internal tasks). Format: 'provider/model-name' e.g. 'xai/grok-4-1-fast-non-reasoning'. Defaults to 'model' if not set."
     required: false
-    default: "false"
-  use_foundry:
-    description: "Use Microsoft Foundry with OIDC authentication instead of direct Anthropic API"
+    default: "xai/grok-4-1-fast-non-reasoning"
+  model_expensive:
+    description: "Large/capable tier model spec (opus equivalent — complex reasoning, rarely selected). Format: 'provider/model-name' e.g. 'openai/GPT-5.4'. Defaults to 'model' if not set."
     required: false
-    default: "false"
+    default: "openai/GPT-5.4"
 
   claude_args:
     description: "Additional arguments to pass directly to Claude CLI"
@@ -94,6 +99,10 @@ inputs:
     description: "Additional GitHub permissions to request (e.g., 'actions: read')"
     required: false
     default: ""
+  auto_fix_pr_reviews:
+    description: "Automatically trigger when a non-approved review is submitted on a PR authored by the bot. No @mention needed — the bot will read the review and push fixes."
+    required: false
+    default: "false"
   use_sticky_comment:
     description: "Use just one comment to deliver issue/PR comments"
     required: false
@@ -271,6 +280,7 @@ runs:
         BOT_ID: ${{ inputs.bot_id }}
         BOT_NAME: ${{ inputs.bot_name }}
         TRACK_PROGRESS: ${{ inputs.track_progress }}
+        AUTO_FIX_PR_REVIEWS: ${{ inputs.auto_fix_pr_reviews }}
         INCLUDE_FIX_LINKS: ${{ inputs.include_fix_links }}
         ADDITIONAL_PERMISSIONS: ${{ inputs.additional_permissions }}
         CLAUDE_ARGS: ${{ inputs.claude_args }}
@@ -288,43 +298,13 @@ runs:
         INPUT_PLUGIN_MARKETPLACES: ${{ inputs.plugin_marketplaces }}
         PATH_TO_CLAUDE_CODE_EXECUTABLE: ${{ inputs.path_to_claude_code_executable }}
 
-        # Model configuration
+        # Model configuration — proxy setup reads these to build the LiteLLM config
         NODE_VERSION: ${{ env.NODE_VERSION }}
-
-        # Provider configuration
-        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
-        CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude_code_oauth_token }}
-        ANTHROPIC_BASE_URL: ${{ env.ANTHROPIC_BASE_URL }}
-        ANTHROPIC_CUSTOM_HEADERS: ${{ env.ANTHROPIC_CUSTOM_HEADERS }}
-        CLAUDE_CODE_USE_BEDROCK: ${{ inputs.use_bedrock == 'true' && '1' || '' }}
-        CLAUDE_CODE_USE_VERTEX: ${{ inputs.use_vertex == 'true' && '1' || '' }}
-        CLAUDE_CODE_USE_FOUNDRY: ${{ inputs.use_foundry == 'true' && '1' || '' }}
-
-        # AWS configuration
-        AWS_REGION: ${{ env.AWS_REGION }}
-        AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
-        AWS_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
-        AWS_BEARER_TOKEN_BEDROCK: ${{ env.AWS_BEARER_TOKEN_BEDROCK }}
-        ANTHROPIC_BEDROCK_BASE_URL: ${{ env.ANTHROPIC_BEDROCK_BASE_URL || (env.AWS_REGION && format('https://bedrock-runtime.{0}.amazonaws.com', env.AWS_REGION)) }}
-
-        # GCP configuration
-        ANTHROPIC_VERTEX_PROJECT_ID: ${{ env.ANTHROPIC_VERTEX_PROJECT_ID }}
-        CLOUD_ML_REGION: ${{ env.CLOUD_ML_REGION }}
-        GOOGLE_APPLICATION_CREDENTIALS: ${{ env.GOOGLE_APPLICATION_CREDENTIALS }}
-        ANTHROPIC_VERTEX_BASE_URL: ${{ env.ANTHROPIC_VERTEX_BASE_URL }}
-
-        # Model-specific regions for Vertex
-        VERTEX_REGION_CLAUDE_3_5_HAIKU: ${{ env.VERTEX_REGION_CLAUDE_3_5_HAIKU }}
-        VERTEX_REGION_CLAUDE_3_5_SONNET: ${{ env.VERTEX_REGION_CLAUDE_3_5_SONNET }}
-        VERTEX_REGION_CLAUDE_3_7_SONNET: ${{ env.VERTEX_REGION_CLAUDE_3_7_SONNET }}
-
-        # Microsoft Foundry configuration
-        ANTHROPIC_FOUNDRY_RESOURCE: ${{ env.ANTHROPIC_FOUNDRY_RESOURCE }}
-        ANTHROPIC_FOUNDRY_BASE_URL: ${{ env.ANTHROPIC_FOUNDRY_BASE_URL }}
-        ANTHROPIC_DEFAULT_SONNET_MODEL: ${{ env.ANTHROPIC_DEFAULT_SONNET_MODEL }}
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ env.ANTHROPIC_DEFAULT_HAIKU_MODEL }}
-        ANTHROPIC_DEFAULT_OPUS_MODEL: ${{ env.ANTHROPIC_DEFAULT_OPUS_MODEL }}
+        MODEL_SMALL: ${{ inputs.model_cheap }}
+        MODEL_MEDIUM: ${{ inputs.model }}
+        MODEL_LARGE: ${{ inputs.model_expensive }}
+        XAI_API_KEY: ${{ inputs.xai_api_key }}
+        OPENAI_API_KEY: ${{ inputs.openai_api_key }}
 
         # MCP configuration — these env vars are read directly from process.env by the
         # Claude CLI subprocess. They must be listed explicitly here because this step's

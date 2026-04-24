@@ -40,6 +40,7 @@ import { installPlugins } from "../../base-action/src/install-plugins";
 import { preparePrompt } from "../../base-action/src/prepare-prompt";
 import { runClaude } from "../../base-action/src/run-claude";
 import type { ClaudeRunResult } from "../../base-action/src/run-claude-sdk";
+import { setupModelProxy } from "../../base-action/src/setup-model-proxy";
 
 /**
  * Install Claude Code CLI, handling retry logic and custom executable paths.
@@ -229,6 +230,14 @@ async function run() {
     process.env.INPUT_ACTION_INPUTS_PRESENT = actionInputsPresent;
     process.env.CLAUDE_CODE_ACTION = "1";
     process.env.DETAILED_PERMISSION_MESSAGES = "1";
+
+    await setupModelProxy(
+      process.env.MODEL_SMALL || process.env.MODEL_MEDIUM || "",
+      process.env.MODEL_MEDIUM || "",
+      process.env.MODEL_LARGE || process.env.MODEL_MEDIUM || "",
+      process.env.XAI_API_KEY || "",
+      process.env.OPENAI_API_KEY || "",
+    );
 
     validateEnvironmentVariables();
 

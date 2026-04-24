@@ -101,8 +101,25 @@ export function checkContainsTrigger(context: ParsedGitHubContext): boolean {
     isPullRequestReviewEvent(context) &&
     (context.eventAction === "submitted" || context.eventAction === "edited")
   ) {
-    const reviewBody = context.payload.review.body || "";
-    // Check for exact match with word boundaries or punctuation
+    const reviewPayload = context.payload;
+    const reviewBody = reviewPayload.review.body || "";
+    const reviewState = reviewPayload.review.state;
+
+    // Auto-trigger on non-approved reviews of bot-authored PRs (no @mention needed).
+    // "changes_requested" and "commented" reviews both fire this; "approved" is skipped.
+    if (
+      context.inputs.autoFixPrReviews &&
+      context.eventAction === "submitted" &&
+      reviewState !== "approved" &&
+      reviewPayload.pull_request.user.login === context.inputs.botName
+    ) {
+      console.log(
+        `Review (${reviewState}) submitted on bot-authored PR by ${context.inputs.botName}, triggering fix cycle`,
+      );
+      return true;
+    }
+
+    // Check for explicit @mention in review body
     const regex = new RegExp(
       `(^|\\s)${escapeRegExp(triggerPhrase)}([\\s.,!?;:]|$)`,
     );

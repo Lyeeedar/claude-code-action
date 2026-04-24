@@ -26,26 +26,29 @@ inputs:
     default: ""
 
   # Authentication settings
-  anthropic_api_key:
-    description: "Anthropic API key (required for direct Anthropic API)"
+  xai_api_key:
+    description: "xAI API key — required when any model spec uses the 'xai/' prefix."
     required: false
     default: ""
-  claude_code_oauth_token:
-    description: "Claude Code OAuth token (alternative to anthropic_api_key)"
+  openai_api_key:
+    description: "OpenAI API key — required when any model spec uses the 'openai/' prefix."
     required: false
     default: ""
-  use_bedrock:
-    description: "Use Amazon Bedrock with OIDC authentication instead of direct Anthropic API"
+
+  # Model configuration — use "provider/model-name" format.
+  # Supported providers: openai, xai. Bare names default to openai.
+  model:
+    description: "Medium/primary tier model spec (sonnet equivalent). Format: 'provider/model-name'."
     required: false
-    default: "false"
-  use_vertex:
-    description: "Use Google Vertex AI with OIDC authentication instead of direct Anthropic API"
+    default: "openai/GPT-5.3-Codex"
+  model_cheap:
+    description: "Small/fast tier model spec (haiku equivalent). Defaults to 'model' if not set."
     required: false
-    default: "false"
-  use_foundry:
-    description: "Use Microsoft Foundry with OIDC authentication instead of direct Anthropic API"
+    default: "xai/grok-4-1-fast-non-reasoning"
+  model_expensive:
+    description: "Large/capable tier model spec (opus equivalent). Defaults to 'model' if not set."
     required: false
-    default: "false"
+    default: "openai/GPT-5.4"
 
   use_node_cache:
     description: "Whether to use Node.js dependency caching (set to true only for Node.js projects with lock files)"
@@ -160,8 +163,13 @@ runs:
         fi
         bun run ${GITHUB_ACTION_PATH}/src/index.ts
       env:
-        # Model configuration
+        # Model configuration — proxy setup reads these to build the LiteLLM config
         CLAUDE_CODE_ACTION: "1"
+        MODEL_SMALL: ${{ inputs.model_cheap }}
+        MODEL_MEDIUM: ${{ inputs.model }}
+        MODEL_LARGE: ${{ inputs.model_expensive }}
+        XAI_API_KEY: ${{ inputs.xai_api_key }}
+        OPENAI_API_KEY: ${{ inputs.openai_api_key }}
         INPUT_PROMPT: ${{ inputs.prompt }}
         INPUT_PROMPT_FILE: ${{ inputs.prompt_file }}
         INPUT_SETTINGS: ${{ inputs.settings }}
@@ -171,37 +179,6 @@ runs:
         INPUT_SHOW_FULL_OUTPUT: ${{ inputs.show_full_output }}
         INPUT_PLUGINS: ${{ inputs.plugins }}
         INPUT_PLUGIN_MARKETPLACES: ${{ inputs.plugin_marketplaces }}
-
-        # Provider configuration
-        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
-        CLAUDE_CODE_OAUTH_TOKEN: ${{ inputs.claude_code_oauth_token }}
-        ANTHROPIC_BASE_URL: ${{ env.ANTHROPIC_BASE_URL }}
-        ANTHROPIC_CUSTOM_HEADERS: ${{ env.ANTHROPIC_CUSTOM_HEADERS }}
-        # Only set provider flags if explicitly true, since any value (including "false") is truthy
-        CLAUDE_CODE_USE_BEDROCK: ${{ inputs.use_bedrock == 'true' && '1' || '' }}
-        CLAUDE_CODE_USE_VERTEX: ${{ inputs.use_vertex == 'true' && '1' || '' }}
-        CLAUDE_CODE_USE_FOUNDRY: ${{ inputs.use_foundry == 'true' && '1' || '' }}
-
-        # AWS configuration
-        AWS_REGION: ${{ env.AWS_REGION }}
-        AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
-        AWS_SESSION_TOKEN: ${{ env.AWS_SESSION_TOKEN }}
-        AWS_BEARER_TOKEN_BEDROCK: ${{ env.AWS_BEARER_TOKEN_BEDROCK }}
-        ANTHROPIC_BEDROCK_BASE_URL: ${{ env.ANTHROPIC_BEDROCK_BASE_URL || (env.AWS_REGION && format('https://bedrock-runtime.{0}.amazonaws.com', env.AWS_REGION)) }}
-
-        # GCP configuration
-        ANTHROPIC_VERTEX_PROJECT_ID: ${{ env.ANTHROPIC_VERTEX_PROJECT_ID }}
-        CLOUD_ML_REGION: ${{ env.CLOUD_ML_REGION }}
-        GOOGLE_APPLICATION_CREDENTIALS: ${{ env.GOOGLE_APPLICATION_CREDENTIALS }}
-        ANTHROPIC_VERTEX_BASE_URL: ${{ env.ANTHROPIC_VERTEX_BASE_URL }}
-
-        # Microsoft Foundry configuration
-        ANTHROPIC_FOUNDRY_RESOURCE: ${{ env.ANTHROPIC_FOUNDRY_RESOURCE }}
-        ANTHROPIC_FOUNDRY_BASE_URL: ${{ env.ANTHROPIC_FOUNDRY_BASE_URL }}
-        ANTHROPIC_DEFAULT_SONNET_MODEL: ${{ env.ANTHROPIC_DEFAULT_SONNET_MODEL }}
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: ${{ env.ANTHROPIC_DEFAULT_HAIKU_MODEL }}
-        ANTHROPIC_DEFAULT_OPUS_MODEL: ${{ env.ANTHROPIC_DEFAULT_OPUS_MODEL }}
 
         # Telemetry configuration
         CLAUDE_CODE_ENABLE_TELEMETRY: ${{ env.CLAUDE_CODE_ENABLE_TELEMETRY }}
