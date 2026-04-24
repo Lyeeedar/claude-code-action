@@ -6,7 +6,7 @@ on:
   pull_request_review_comment:
     types: [created]
   issues:
-    types: [opened, assigned, labeled]
+    types: [assigned, labeled]
   pull_request_review:
     types: [submitted]
 
@@ -16,8 +16,8 @@ jobs:
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@agent')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@agent')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@agent')) ||
-      (github.event_name == 'issues' && github.event.action == 'assigned') ||
-      (github.event_name == 'issues' && github.event.action == 'labeled') ||
+      (github.event_name == 'issues' && github.event.action == 'assigned' && github.event.assignee.login == 'agent[bot]') ||
+      (github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'agent') ||
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@agent') || contains(github.event.issue.title, '@agent'))) ||
       (github.event_name == 'pull_request_review' && endsWith(github.event.pull_request.user.login, '[bot]'))
     runs-on: ubuntu-latest
