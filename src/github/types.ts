@@ -60,6 +60,36 @@ export type GitHubReview = {
   };
 };
 
+export type LinkedIssue = {
+  number: number;
+  title: string;
+  body: string;
+  author: GitHubAuthor;
+  createdAt: string;
+  updatedAt?: string;
+  lastEditedAt?: string;
+  state: string;
+  comments: {
+    nodes: GitHubComment[];
+  };
+};
+
+export type LinkedPullRequest = {
+  number: number;
+  title: string;
+  body: string;
+  author: GitHubAuthor;
+  state: string;
+  baseRefName: string;
+  headRefName: string;
+  additions: number;
+  deletions: number;
+  createdAt: string;
+  comments: {
+    nodes: GitHubComment[];
+  };
+};
+
 export type GitHubPullRequest = {
   title: string;
   body: string;
@@ -104,6 +134,9 @@ export type GitHubPullRequest = {
   reviews: {
     nodes: GitHubReview[];
   };
+  closingIssuesReferences?: {
+    nodes: LinkedIssue[];
+  };
 };
 
 export type GitHubIssue = {
@@ -121,6 +154,11 @@ export type GitHubIssue = {
   };
   comments: {
     nodes: GitHubComment[];
+  };
+  timelineItems?: {
+    nodes: Array<{
+      source?: LinkedPullRequest | null;
+    }>;
   };
 };
 

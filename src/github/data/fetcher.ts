@@ -17,6 +17,8 @@ import type {
   GitHubPullRequest,
   GitHubReview,
   IssueQueryResponse,
+  LinkedIssue,
+  LinkedPullRequest,
   PullRequestQueryResponse,
 } from "../types";
 import type { CommentWithImages } from "../utils/image-downloader";
@@ -387,6 +389,8 @@ export type FetchDataResult = {
   reviewData: { nodes: GitHubReview[] } | null;
   imageUrlMap: Map<string, string>;
   triggerDisplayName?: string | null;
+  linkedIssues: LinkedIssue[];
+  linkedPullRequests: LinkedPullRequest[];
 };
 
 export async function fetchGitHubData({
@@ -410,6 +414,8 @@ export async function fetchGitHubData({
   let comments: GitHubComment[] = [];
   let changedFiles: GitHubFile[] = [];
   let reviewData: { nodes: GitHubReview[] } | null = null;
+  let linkedIssues: LinkedIssue[] = [];
+  let linkedPullRequests: LinkedPullRequest[] = [];
 
   try {
     if (isPR) {
@@ -441,8 +447,12 @@ export async function fetchGitHubData({
           excludeCommentsByActor,
         );
         reviewData = pullRequest.reviews || { nodes: [] };
+        linkedIssues = pullRequest.closingIssuesReferences?.nodes ?? [];
 
         console.log(`Successfully fetched PR #${prNumber} data`);
+        if (linkedIssues.length > 0) {
+          console.log(`Found ${linkedIssues.length} linked issue(s): ${linkedIssues.map((i) => `#${i.number}`).join(", ")}`);
+        }
       } else {
         throw new Error(`PR #${prNumber} not found`);
       }
@@ -468,7 +478,15 @@ export async function fetchGitHubData({
           excludeCommentsByActor,
         );
 
+        // Extract linked PRs from cross-reference timeline events
+        linkedPullRequests = (contextData.timelineItems?.nodes ?? [])
+          .map((n) => n.source)
+          .filter((s): s is LinkedPullRequest => s != null && "baseRefName" in s);
+
         console.log(`Successfully fetched issue #${prNumber} data`);
+        if (linkedPullRequests.length > 0) {
+          console.log(`Found ${linkedPullRequests.length} linked PR(s): ${linkedPullRequests.map((p) => `#${p.number}`).join(", ")}`);
+        }
       } else {
         throw new Error(`Issue #${prNumber} not found`);
       }
@@ -604,11 +622,28 @@ export async function fetchGitHubData({
     }
   }
 
+  // Include linked issue/PR bodies and comments in image processing
+  const linkedIssueContent: CommentWithImages[] = linkedIssues.flatMap((issue) => [
+    { type: "issue_body" as const, issueNumber: String(issue.number), body: issue.body },
+    ...issue.comments.nodes
+      .filter((c) => c.body && !c.isMinimized)
+      .map((c) => ({ type: "issue_comment" as const, id: c.databaseId, body: c.body })),
+  ]);
+
+  const linkedPRContent: CommentWithImages[] = linkedPullRequests.flatMap((pr) => [
+    { type: "pr_body" as const, pullNumber: String(pr.number), body: pr.body },
+    ...pr.comments.nodes
+      .filter((c) => c.body && !c.isMinimized)
+      .map((c) => ({ type: "issue_comment" as const, id: c.databaseId, body: c.body })),
+  ]);
+
   const allComments = [
     ...mainBody,
     ...issueComments,
     ...reviewBodies,
     ...reviewComments,
+    ...linkedIssueContent,
+    ...linkedPRContent,
   ];
 
   const imageUrlMap = await downloadCommentImages(
@@ -637,6 +672,8 @@ export async function fetchGitHubData({
     reviewData,
     imageUrlMap,
     triggerDisplayName,
+    linkedIssues,
+    linkedPullRequests,
   };
 }
 
