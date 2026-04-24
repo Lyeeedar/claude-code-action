@@ -36,8 +36,6 @@ import { formatTurnsFromData } from "./format-turns";
 import type { Turn } from "./format-turns";
 import { redactSecrets } from "../github/utils/sanitizer";
 // Base-action imports (used directly instead of subprocess)
-import { setupWorkloadIdentity } from "../../base-action/src/workload-identity";
-import type { WorkloadIdentityHandle } from "../../base-action/src/workload-identity";
 import { validateEnvironmentVariables } from "../../base-action/src/validate-env";
 import { setupClaudeCodeSettings } from "../../base-action/src/setup-claude-code-settings";
 import { installPlugins } from "../../base-action/src/install-plugins";
@@ -45,6 +43,7 @@ import { preparePrompt } from "../../base-action/src/prepare-prompt";
 import { runClaude } from "../../base-action/src/run-claude";
 import type { ClaudeRunResult } from "../../base-action/src/run-claude-sdk";
 import { setExecutionFileOutputIfPresent } from "../../base-action/src/execution-file";
+import { setupModelProxy } from "../../base-action/src/setup-model-proxy";
 
 // Exported for unit testing. `set -o pipefail` makes curl's non-zero exit
 // propagate through the pipe so the install retry logic actually triggers
@@ -158,7 +157,6 @@ async function run() {
   let prepareError: string | undefined;
   let context: GitHubContext | undefined;
   let octokit: Octokits | undefined;
-  let workloadIdentity: WorkloadIdentityHandle | undefined;
   // Paths reverted to the PR base branch, which cleanup must not commit back
   // onto the PR author's branch. Empty unless restoreConfigFromBase ran.
   let restoredConfigPaths: string[] = [];
@@ -245,9 +243,13 @@ async function run() {
     process.env.CLAUDE_CODE_ACTION = "1";
     process.env.DETAILED_PERMISSION_MESSAGES = "1";
 
-    // When workload identity federation is configured, fetch the GitHub OIDC
-    // identity token and expose it to the CLI before validating auth env vars.
-    workloadIdentity = await setupWorkloadIdentity();
+    await setupModelProxy(
+      process.env.MODEL_SMALL || process.env.MODEL_MEDIUM || "",
+      process.env.MODEL_MEDIUM || "",
+      process.env.MODEL_LARGE || process.env.MODEL_MEDIUM || "",
+      process.env.XAI_API_KEY || "",
+      process.env.OPENAI_API_KEY || "",
+    );
 
     validateEnvironmentVariables();
 
@@ -324,10 +326,6 @@ async function run() {
     core.setFailed(`Action failed with error: ${redactSecrets(errorMessage)}`);
   } finally {
     // Phase 4: Cleanup (always runs)
-
-    // Stop refreshing the workload identity token file and delete the token
-    // material so it doesn't outlive this step
-    workloadIdentity?.stop();
 
     // Update tracking comment
     if (

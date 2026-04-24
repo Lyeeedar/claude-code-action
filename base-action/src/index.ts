@@ -7,15 +7,17 @@ import { setupClaudeCodeSettings } from "./setup-claude-code-settings";
 import { validateEnvironmentVariables } from "./validate-env";
 import { installPlugins } from "./install-plugins";
 import { setExecutionFileOutputIfPresent } from "./execution-file";
-import { setupWorkloadIdentity } from "./workload-identity";
-import type { WorkloadIdentityHandle } from "./workload-identity";
+import { setupModelProxy } from "./setup-model-proxy";
 
 async function run() {
-  let workloadIdentity: WorkloadIdentityHandle | undefined;
   try {
-    // When workload identity federation is configured, fetch the GitHub OIDC
-    // identity token and expose it to the CLI before validating auth env vars.
-    workloadIdentity = await setupWorkloadIdentity();
+    await setupModelProxy(
+      process.env.MODEL_SMALL || process.env.MODEL_MEDIUM || "",
+      process.env.MODEL_MEDIUM || "",
+      process.env.MODEL_LARGE || process.env.MODEL_MEDIUM || "",
+      process.env.XAI_API_KEY || "",
+      process.env.OPENAI_API_KEY || "",
+    );
 
     validateEnvironmentVariables();
 
@@ -74,10 +76,6 @@ async function run() {
     core.setFailed(`Action failed with error: ${error}`);
     core.setOutput("conclusion", "failure");
     process.exit(1);
-  } finally {
-    // Stop refreshing the workload identity token file (so the process can
-    // exit) and delete the token material so it doesn't outlive this step
-    workloadIdentity?.stop();
   }
 }
 
