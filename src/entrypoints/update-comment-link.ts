@@ -139,20 +139,31 @@ export async function updateCommentLink(
             basehead: `${baseBranch}...${claudeBranch}`,
           });
 
-        // If there are changes (commits or file changes), add the PR URL
+        // If there are changes (commits or file changes), create a PR
         if (
           comparison.total_commits > 0 ||
           (comparison.files && comparison.files.length > 0)
         ) {
           const entityType = context.isPR ? "PR" : "Issue";
-          const prTitle = encodeURIComponent(
-            `${entityType} #${context.entityNumber}: Changes from Claude`,
-          );
-          const prBody = encodeURIComponent(
-            `This PR addresses ${entityType.toLowerCase()} #${context.entityNumber}\n\nGenerated with [Claude Code](https://claude.ai/code)`,
-          );
-          const prUrl = `${serverUrl}/${owner}/${repo}/compare/${baseBranch}...${claudeBranch}?quick_pull=1&title=${prTitle}&body=${prBody}`;
-          prLink = `\n[Create a PR](${prUrl})`;
+          const prTitle = `${entityType} #${context.entityNumber}: Changes from Claude`;
+          const prBody = `This PR addresses ${entityType.toLowerCase()} #${context.entityNumber}\n\nGenerated with [Claude Code](https://claude.ai/code)`;
+          try {
+            const { data: pr } = await octokit.rest.pulls.create({
+              owner,
+              repo,
+              title: prTitle,
+              body: prBody,
+              head: claudeBranch,
+              base: baseBranch,
+            });
+            prLink = `\n[View PR #${pr.number}](${pr.html_url})`;
+            console.log(`Created PR #${pr.number}: ${pr.html_url}`);
+          } catch (prError) {
+            console.error("Error creating PR:", prError);
+            // Fall back to a quick-pull link if PR creation fails
+            const prUrl = `${serverUrl}/${owner}/${repo}/compare/${baseBranch}...${claudeBranch}?quick_pull=1&title=${encodeURIComponent(prTitle)}&body=${encodeURIComponent(prBody)}`;
+            prLink = `\n[Create a PR](${prUrl})`;
+          }
         }
       } catch (error) {
         console.error("Error checking for changes in branch:", error);
