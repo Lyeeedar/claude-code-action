@@ -509,9 +509,13 @@ function generateSimplePrompt(
     : "";
 
   const hasImages = imageUrlMap && imageUrlMap.size > 0;
+  const imagePaths = hasImages ? Array.from(imageUrlMap!.values()) : [];
   const imagesInfo = hasImages
     ? `\n\n<images_info>
-Images from comments have been saved to disk. Paths are in the formatted content above. Use Read tool to view them.
+Images from comments have been downloaded and saved locally. Their local paths are shown inline in the content above.
+${process.env.MINIMAX_API_KEY ? `To understand each image, call the \`mcp__MiniMax__understand_image\` tool with \`image_url\` set to the local file path and a description of what you need to know. Do this BEFORE attempting to address the request.
+Image paths:
+${imagePaths.map((p) => `- ${p}`).join("\n")}` : "Use the Read tool to view them."}
 </images_info>`
     : "";
 
@@ -630,11 +634,15 @@ export function generateDefaultPrompt(
 
   // Check if any images were downloaded
   const hasImages = imageUrlMap && imageUrlMap.size > 0;
+  const imagePaths = hasImages ? Array.from(imageUrlMap!.values()) : [];
   const imagesInfo = hasImages
     ? `
 
 <images_info>
-Images have been downloaded from GitHub comments and saved to disk. Their file paths are included in the formatted comments and body above. You can use the Read tool to view these images.
+Images have been downloaded from GitHub comments and saved locally. Their file paths are shown inline in the content above.
+${process.env.MINIMAX_API_KEY ? `To understand each image, call the \`mcp__MiniMax__understand_image\` tool with \`image_url\` set to the local file path and a description of what you need to know. Do this BEFORE attempting to address the request.
+Image paths:
+${imagePaths.map((p) => `- ${p}`).join("\n")}` : "Use the Read tool to view them."}
 </images_info>`
     : "";
 
@@ -954,6 +962,18 @@ export async function createPrompt(
       `${process.env.RUNNER_TEMP || "/tmp"}/claude-prompts/claude-prompt.txt`,
       promptContent,
     );
+
+    // Write image manifest so the SDK runner can embed images directly as content blocks
+    const imagePaths = githubData.imageUrlMap
+      ? Array.from(githubData.imageUrlMap.values())
+      : [];
+    if (imagePaths.length > 0) {
+      await writeFile(
+        `${process.env.RUNNER_TEMP || "/tmp"}/claude-prompts/claude-images.json`,
+        JSON.stringify(imagePaths),
+      );
+      console.log(`Wrote image manifest with ${imagePaths.length} image(s)`);
+    }
 
     // Extract and write the user request separately for SDK multi-block messaging
     // This allows the CLI to process slash commands (e.g., "@claude /review-pr")

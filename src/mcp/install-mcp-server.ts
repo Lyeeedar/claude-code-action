@@ -223,6 +223,18 @@ export async function prepareMcpConfig(
       };
     }
 
+    // Include MiniMax MCP server when MINIMAX_API_KEY is set (provides understand_image tool)
+    if (process.env.MINIMAX_API_KEY) {
+      baseMcpConfig.mcpServers.MiniMax = {
+        command: "uvx",
+        args: ["minimax-coding-plan-mcp"],
+        env: {
+          MINIMAX_API_KEY: process.env.MINIMAX_API_KEY,
+          MINIMAX_API_HOST: "https://api.minimax.io",
+        },
+      };
+    }
+
     // Return only our GitHub servers config
     // User's config will be passed as separate --mcp-config flags
     return JSON.stringify(baseMcpConfig, null, 2);

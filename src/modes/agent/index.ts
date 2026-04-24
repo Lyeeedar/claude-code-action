@@ -82,6 +82,9 @@ export async function prepareAgentMode({
   // Parse allowed tools from user's claude_args
   const userClaudeArgs = process.env.CLAUDE_ARGS || "";
   const allowedTools = parseAllowedTools(userClaudeArgs);
+  if (process.env.MINIMAX_API_KEY) {
+    allowedTools.push("mcp__MiniMax__understand_image");
+  }
 
   // Check for branch info from environment variables (useful for auto-fix workflows)
   const claudeBranch = process.env.CLAUDE_BRANCH || undefined;

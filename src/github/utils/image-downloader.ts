@@ -4,6 +4,8 @@ import type { Octokits } from "../api/client";
 import { GITHUB_SERVER_URL } from "../api/config";
 
 const escapedUrl = GITHUB_SERVER_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Matches private GitHub attachment URLs (require signed URL extraction)
 const IMAGE_REGEX = new RegExp(
   `!\\[[^\\]]*\\]\\((${escapedUrl}\\/user-attachments\\/assets\\/[^)]+)\\)`,
   "g",
@@ -13,6 +15,10 @@ const HTML_IMG_REGEX = new RegExp(
   `<img[^>]+src=["']([^"']*${escapedUrl}\\/user-attachments\\/assets\\/[^"']+)["'][^>]*>`,
   "gi",
 );
+
+// Matches any public http/https image URL in markdown image syntax.
+// Captures the URL broadly — extension filtering happens at download time via Content-Type.
+const PUBLIC_IMAGE_REGEX = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/gi;
 
 type IssueComment = {
   type: "issue_comment";
@@ -228,6 +234,48 @@ export async function downloadCommentImages(
         `Failed to process images for ${comment.type} ${id}:`,
         error,
       );
+    }
+  }
+
+  // Also download any public image URLs not handled by the private-attachment path above
+  const privateUrlPattern = new RegExp(
+    `${escapedUrl}/user-attachments/assets/`,
+  );
+  for (const comment of comments) {
+    PUBLIC_IMAGE_REGEX.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = PUBLIC_IMAGE_REGEX.exec(comment.body)) !== null) {
+      const publicUrl = match[1];
+      if (!publicUrl) continue;
+      if (privateUrlPattern.test(publicUrl)) continue; // already handled above
+      if (urlToPathMap.has(publicUrl)) continue;
+
+      try {
+        console.log(`Downloading public image ${publicUrl}...`);
+        const response = await fetch(publicUrl);
+        if (!response.ok) {
+          console.warn(`Failed to download ${publicUrl}: HTTP ${response.status}`);
+          continue;
+        }
+        const contentType = response.headers.get("content-type") ?? "";
+        if (!contentType.startsWith("image/")) {
+          console.warn(`Skipping ${publicUrl}: Content-Type is "${contentType}"`);
+          continue;
+        }
+        const ext = contentType.includes("png") ? ".png"
+          : contentType.includes("gif") ? ".gif"
+          : contentType.includes("webp") ? ".webp"
+          : contentType.includes("svg") ? ".svg"
+          : getImageExtension(publicUrl);
+        const filename = `image-${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`;
+        const localPath = path.join(downloadsDir, filename);
+        const buffer = Buffer.from(await response.arrayBuffer());
+        await fs.writeFile(localPath, buffer);
+        console.log(`✓ Saved public image: ${localPath}`);
+        urlToPathMap.set(publicUrl, localPath);
+      } catch (err) {
+        console.error(`Failed to download public image ${publicUrl}:`, err);
+      }
     }
   }
 

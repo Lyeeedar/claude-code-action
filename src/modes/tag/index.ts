@@ -226,8 +226,13 @@ export async function prepareTagMode({
     "mcp__github_ci__get_workflow_run_details",
     "mcp__github_ci__download_job_log",
     "Bash(gh pr edit:*)",
+    "WebFetch",
     ...userAllowedMCPTools,
   ];
+
+  if (process.env.MINIMAX_API_KEY) {
+    tagModeTools.push("mcp__MiniMax__understand_image");
+  }
 
   // Add git commands when using git CLI (no API commit signing, or SSH signing)
   // SSH signing still uses git CLI, just with signing enabled
