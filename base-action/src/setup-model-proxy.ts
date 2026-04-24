@@ -68,10 +68,24 @@ function installLiteLLM(): void {
   console.log("LiteLLM installed.");
 }
 
-async function waitForProxy(port: number, maxWaitMs = 60000): Promise<void> {
+async function waitForProxy(
+  port: number,
+  child: ReturnType<typeof spawn>,
+  maxWaitMs = 60000,
+): Promise<void> {
   const url = `http://localhost:${port}/health`;
   const start = Date.now();
+
+  // Fail immediately if the child exits before the proxy is ready
+  let childExitCode: number | null = null;
+  child.on("exit", (code) => {
+    childExitCode = code ?? 1;
+  });
+
   while (Date.now() - start < maxWaitMs) {
+    if (childExitCode !== null) {
+      throw new Error(`LiteLLM exited with code ${childExitCode} before becoming ready`);
+    }
     try {
       const res = await fetch(url);
       if (res.status < 500) return;
@@ -134,16 +148,14 @@ export async function setupModelProxy(
   const child = spawn(
     "litellm",
     ["--config", configPath, "--port", String(PROXY_PORT)],
-    { env: process.env, stdio: ["ignore", "pipe", "pipe"], detached: false },
+    { env: process.env, stdio: "inherit", detached: false },
   );
 
-  child.stdout?.on("data", (d: Buffer) => process.stdout.write(d));
-  child.stderr?.on("data", (d: Buffer) => process.stderr.write(d));
-  child.on("error", (err: Error) => {
-    throw new Error(`LiteLLM failed to start: ${err.message}`);
-  });
+  // unref so the child process doesn't prevent the parent from exiting after
+  // Claude Code finishes (with or without an error).
+  await waitForProxy(PROXY_PORT, child);
 
-  await waitForProxy(PROXY_PORT);
+  child.unref();
 
   process.env.ANTHROPIC_BASE_URL = `http://localhost:${PROXY_PORT}`;
   process.env.ANTHROPIC_AUTH_TOKEN = "litellm-proxy";
