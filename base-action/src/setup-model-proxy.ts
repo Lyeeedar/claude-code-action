@@ -132,14 +132,7 @@ export async function setupModelProxy(
 
   const child = spawn(
     "litellm",
-    [
-      "--config",
-      configPath,
-      "--port",
-      String(PROXY_PORT),
-      "--detailed_debug",
-      "False",
-    ],
+    ["--config", configPath, "--port", String(PROXY_PORT)],
     { env: process.env, stdio: ["ignore", "pipe", "pipe"], detached: false },
   );
 
