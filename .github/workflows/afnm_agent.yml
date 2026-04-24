@@ -26,6 +26,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
+      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -53,3 +54,4 @@ jobs:
           model: "minimax/MiniMax-M2.7"
           model_expensive: "minimax/MiniMax-M2.7"
           minimax_api_key: ${{ secrets.MINIMAX_API_KEY }}
+          show_full_output: "true"
