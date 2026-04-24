@@ -106,6 +106,7 @@ export function prepareContext(
   claudeCommentId: string,
   baseBranch?: string,
   claudeBranch?: string,
+  draftPrUrl?: string,
 ): PreparedContext {
   const repository = context.repository.full_name;
   const eventName = context.eventName;
@@ -148,6 +149,7 @@ export function prepareContext(
     ...(triggerUsername && { triggerUsername }),
     ...(prompt && { prompt }),
     ...(claudeBranch && { claudeBranch }),
+    ...(draftPrUrl && { draftPrUrl }),
   };
 
   // Parse event-specific data based on event type
@@ -580,10 +582,9 @@ Communication:
 ${getCommitInstructions(eventData, githubData, context, useCommitSigning)}
 ${
   eventData.claudeBranch
-    ? `
-When done with changes, provide a PR link:
-[Create a PR](${GITHUB_SERVER_URL}/${context.repository}/compare/${eventData.baseBranch}...${eventData.claudeBranch}?quick_pull=1&title=<url-encoded-title>&body=<url-encoded-body>)
-Use THREE dots (...) between branches. URL-encode all parameters.`
+    ? context.draftPrUrl
+      ? `\nA draft PR has already been created for your changes: ${context.draftPrUrl}\nJust commit and push your changes — no need to create a PR link.`
+      : `\nWhen done with changes, provide a PR link:\n[Create a PR](${GITHUB_SERVER_URL}/${context.repository}/compare/${eventData.baseBranch}...${eventData.claudeBranch}?quick_pull=1&title=<url-encoded-title>&body=<url-encoded-body>)\nUse THREE dots (...) between branches. URL-encode all parameters.`
     : ""
 }
 
@@ -767,13 +768,11 @@ ${eventData.eventName === "issue_comment" || eventData.eventName === "pull_reque
       - Mark each subtask as completed as you progress.${getCommitInstructions(eventData, githubData, context, useCommitSigning)}
       ${
         eventData.claudeBranch
-          ? `- Provide a URL to create a PR manually in this format:
+          ? context.draftPrUrl
+            ? `- A draft PR has already been created for your work: ${context.draftPrUrl}\n        Just commit and push your changes — the PR will update automatically. Do not create another PR link.`
+            : `- Provide a URL to create a PR manually in this format:
         [Create a PR](${GITHUB_SERVER_URL}/${context.repository}/compare/${eventData.baseBranch}...<branch-name>?quick_pull=1&title=<url-encoded-title>&body=<url-encoded-body>)
         - IMPORTANT: Use THREE dots (...) between branch names, not two (..)
-          Example: ${GITHUB_SERVER_URL}/${context.repository}/compare/main...feature-branch (correct)
-          NOT: ${GITHUB_SERVER_URL}/${context.repository}/compare/main..feature-branch (incorrect)
-        - IMPORTANT: Ensure all URL parameters are properly encoded - spaces should be encoded as %20, not left as spaces
-          Example: Instead of "fix: update welcome message", use "fix%3A%20update%20welcome%20message"
         - The target-branch should be '${eventData.baseBranch}'.
         - The branch-name is the current branch: ${eventData.claudeBranch}
         - The body should include:
@@ -798,7 +797,7 @@ ${eventData.eventName === "issue_comment" || eventData.eventName === "pull_reque
    - When all todos are completed, remove the spinner and add a brief summary of what was accomplished, and what was not done.
    - Note: If you see previous Claude comments with headers like "**Claude finished @user's task**" followed by "---", do not include this in your comment. The system adds this automatically.
    - If you changed any files locally, you must update them in the remote branch via ${useCommitSigning ? "mcp__github_file_ops__commit_files" : "git commands (add, commit, push)"} before saying that you're done.
-   ${eventData.claudeBranch ? `- If you created anything in your branch, your comment must include the PR URL with prefilled title and body mentioned above.` : ""}
+   ${eventData.claudeBranch ? context.draftPrUrl ? `- A draft PR already exists at ${context.draftPrUrl} — include this link in your comment.` : `- If you created anything in your branch, your comment must include the PR URL with prefilled title and body mentioned above.` : ""}
 
 Important Notes:
 - All communication must happen through GitHub PR comments.
@@ -920,6 +919,7 @@ export async function createPrompt(
   claudeBranch: string | undefined,
   githubData: FetchDataResult,
   context: ParsedGitHubContext,
+  draftPrUrl?: string,
 ) {
   try {
     const claudeCommentId = commentId.toString();
@@ -929,6 +929,7 @@ export async function createPrompt(
       claudeCommentId,
       baseBranch,
       claudeBranch,
+      draftPrUrl,
     );
 
     await mkdir(`${process.env.RUNNER_TEMP || "/tmp"}/claude-prompts`, {

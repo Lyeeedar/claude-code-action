@@ -30,6 +30,7 @@ export type UpdateCommentLinkParams = {
   prepareSuccess: boolean;
   prepareError?: string;
   useCommitSigning: boolean;
+  existingPrUrl?: string;
 };
 
 export async function updateCommentLink(
@@ -43,6 +44,7 @@ export async function updateCommentLink(
     context,
     octokit,
     useCommitSigning,
+    existingPrUrl,
   } = params;
 
   const { owner, repo } = context.repository;
@@ -122,6 +124,11 @@ export async function updateCommentLink(
   let prLink = "";
   // If claudeBranch is set, it means we created a new branch (for issues or closed/merged PRs)
   if (claudeBranch && !shouldDeleteBranch) {
+    // If a draft PR was already created upfront, use it directly
+    if (existingPrUrl) {
+      prLink = `\n[View PR](${existingPrUrl})`;
+    }
+
     // Check if comment already contains a PR URL
     const serverUrlPattern = serverUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const prUrlPattern = new RegExp(
@@ -129,7 +136,7 @@ export async function updateCommentLink(
     );
     const containsPRUrl = currentBody.match(prUrlPattern);
 
-    if (!containsPRUrl) {
+    if (!existingPrUrl && !containsPRUrl) {
       // Check if there are changes to the branch compared to the default branch
       try {
         const { data: comparison } =

@@ -5,6 +5,7 @@ import {
   configureGitAuth,
   setupSshSigning,
 } from "../../github/operations/git-config";
+import { $ } from "bun";
 import { prepareMcpConfig } from "../../mcp/install-mcp-server";
 import {
   fetchGitHubData,
@@ -100,6 +101,71 @@ export async function prepareTagMode({
     }
   }
 
+  // Push branch to remote and create a draft PR immediately — before Claude runs.
+  // This ensures work is never lost even if Claude's final push fails.
+  let draftPrUrl: string | undefined;
+  if (branchInfo.claudeBranch && !context.isPR) {
+    const { owner, repo } = context.repository;
+    // Push with retry — if this fails we abort immediately rather than
+    // burning tokens on work that will be lost when the runner exits.
+    let pushed = false;
+    let lastPushError: unknown;
+    for (let attempt = 1; attempt <= 3 && !pushed; attempt++) {
+      try {
+        await $`git push -u origin ${branchInfo.claudeBranch}`.quiet();
+        pushed = true;
+      } catch (err) {
+        lastPushError = err;
+        if (attempt < 3) {
+          console.log(`Push attempt ${attempt} failed, retrying in 3s...`);
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      }
+    }
+    if (!pushed) {
+      throw new Error(
+        `Failed to push branch ${branchInfo.claudeBranch} to remote after 3 attempts — aborting to avoid burning tokens on work that cannot be saved.\n${lastPushError}`,
+      );
+    }
+    console.log(`Pushed branch ${branchInfo.claudeBranch} to remote`);
+
+    // Look for an existing open PR for this branch (e.g. re-trigger on same issue)
+    let existingPrUrl: string | undefined;
+    try {
+      const { data: openPrs } = await octokit.rest.pulls.list({
+        owner,
+        repo,
+        state: "open",
+        head: `${owner}:${branchInfo.claudeBranch}`,
+      });
+      if (openPrs.length > 0) {
+        existingPrUrl = openPrs[0].html_url;
+        console.log(`Found existing PR: ${existingPrUrl}`);
+      }
+    } catch {}
+
+    if (existingPrUrl) {
+      draftPrUrl = existingPrUrl;
+    } else {
+      try {
+        const { data: pr } = await octokit.rest.pulls.create({
+          owner,
+          repo,
+          title: `Issue #${context.entityNumber}: Changes from Claude`,
+          body: `Addresses issue #${context.entityNumber}\n\nGenerated with [Claude Code](https://claude.ai/code)`,
+          head: branchInfo.claudeBranch,
+          base: branchInfo.baseBranch || context.repository.default_branch,
+          draft: true,
+        });
+        draftPrUrl = pr.html_url;
+        console.log(`✅ Created draft PR #${pr.number}: ${draftPrUrl}`);
+      } catch (prError: any) {
+        // GitHub rejects PRs with no diff — fine, PR will be created after Claude pushes
+        console.log(`Skipping draft PR creation (no diff yet): ${prError.message}`);
+      }
+    }
+  }
+
   // Create prompt file
   await createPrompt(
     commentId,
@@ -107,6 +173,7 @@ export async function prepareTagMode({
     branchInfo.claudeBranch,
     githubData,
     context,
+    draftPrUrl,
   );
 
   const userClaudeArgs = process.env.CLAUDE_ARGS || "";
@@ -184,5 +251,6 @@ export async function prepareTagMode({
     branchInfo,
     mcpConfig: ourMcpConfig,
     claudeArgs: claudeArgs.trim(),
+    draftPrUrl,
   };
 }

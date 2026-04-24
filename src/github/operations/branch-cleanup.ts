@@ -31,12 +31,29 @@ export async function checkAndCommitOrDeleteBranch(
       }
     }
 
-    // Only proceed if branch exists remotely
+    // If branch doesn't exist remotely, try pushing it — Claude may have
+    // committed locally but the final push failed (e.g. transient 500 error).
     if (!branchExistsRemotely) {
-      console.log(
-        `Branch ${claudeBranch} does not exist remotely, no branch link will be added`,
-      );
-      return { shouldDeleteBranch: false, branchLink: "" };
+      console.log(`Branch ${claudeBranch} not on remote, attempting to push...`);
+      let pushed = false;
+      for (let attempt = 1; attempt <= 3 && !pushed; attempt++) {
+        try {
+          await $`git push -u origin ${claudeBranch}`;
+          pushed = true;
+          branchExistsRemotely = true;
+          console.log(`✅ Successfully pushed branch ${claudeBranch}`);
+        } catch (pushError) {
+          if (attempt < 3) {
+            console.log(`Push attempt ${attempt} failed, retrying in 3s...`);
+            await new Promise((r) => setTimeout(r, 3000));
+          } else {
+            console.error(`Failed to push branch after 3 attempts:`, pushError);
+          }
+        }
+      }
+      if (!pushed) {
+        return { shouldDeleteBranch: false, branchLink: "" };
+      }
     }
 
     // Check if Claude made any commits to the branch
@@ -72,8 +89,16 @@ export async function checkAndCommitOrDeleteBranch(
               const commitMessage = `Auto-commit: Save uncommitted changes from Claude\n\nRun ID: ${runId}`;
               await $`git commit -m ${commitMessage}`;
 
-              // Push the changes
-              await $`git push origin ${claudeBranch}`;
+              // Push the changes (with retry for transient errors)
+              for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                  await $`git push origin ${claudeBranch}`;
+                  break;
+                } catch (pushErr) {
+                  if (attempt === 3) throw pushErr;
+                  await new Promise((r) => setTimeout(r, 3000));
+                }
+              }
 
               console.log(
                 "✅ Successfully committed and pushed uncommitted changes",
