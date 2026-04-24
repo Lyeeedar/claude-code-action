@@ -8,6 +8,7 @@ export type CommonFields = {
   triggerUserId?: number;
   prompt?: string;
   claudeBranch?: string;
+  draftPrUrl?: string;
 };
 
 type PullRequestReviewCommentEvent = {

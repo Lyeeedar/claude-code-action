@@ -151,6 +151,7 @@ async function run() {
   let commentId: number | undefined;
   let claudeBranch: string | undefined;
   let baseBranch: string | undefined;
+  let draftPrUrl: string | undefined;
   let executionFile: string | undefined;
   let claudeSuccess = false;
   let prepareSuccess = true;
@@ -232,6 +233,7 @@ async function run() {
     commentId = prepareResult.commentId;
     claudeBranch = prepareResult.branchInfo.claudeBranch;
     baseBranch = prepareResult.branchInfo.baseBranch;
+    draftPrUrl = "draftPrUrl" in prepareResult ? prepareResult.draftPrUrl : undefined;
     prepareCompleted = true;
 
     // Phase 2: Install Claude Code CLI
@@ -351,6 +353,7 @@ async function run() {
           prepareError,
           useCommitSigning: context.inputs.useCommitSigning,
           restoredConfigPaths,
+          existingPrUrl: draftPrUrl,
         });
       } catch (error) {
         console.error("Error updating comment with job link:", error);
