@@ -51,16 +51,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           # Stage generated workflows + patched task files (steering-issue numbers)
-          git add .github/workflows/agent-*.yml .github/agents/
+          git add --ignore-errors .github/workflows/agent-*.yml || true
+          git add .github/agents/
 
           if git diff --staged --quiet; then
             echo "Nothing changed — no PR needed"
             exit 0
           fi
+
+          echo "Staged changes:"
+          git diff --staged --stat
 
           BRANCH="compile-agents/$(date -u +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH"
