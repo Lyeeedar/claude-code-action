@@ -147,6 +147,16 @@ export async function prepareTagMode({
     if (existingPrUrl) {
       draftPrUrl = existingPrUrl;
     } else {
+      // Make an empty commit so GitHub allows draft PR creation before any real
+      // changes exist (GitHub rejects PRs with no commits between base and head).
+      try {
+        await $`git commit --allow-empty -m "chore: initialize branch for agent"`.quiet();
+        await $`git push origin ${branchInfo.claudeBranch}`.quiet();
+        console.log(`Created empty commit on ${branchInfo.claudeBranch}`);
+      } catch (emptyErr) {
+        console.log(`Could not create empty commit: ${emptyErr}`);
+      }
+
       try {
         const { data: pr } = await octokit.rest.pulls.create({
           owner,
@@ -160,8 +170,7 @@ export async function prepareTagMode({
         draftPrUrl = pr.html_url;
         console.log(`✅ Created draft PR #${pr.number}: ${draftPrUrl}`);
       } catch (prError: any) {
-        // GitHub rejects PRs with no diff — fine, PR will be created after Claude pushes
-        console.log(`Skipping draft PR creation (no diff yet): ${prError.message}`);
+        console.log(`Draft PR creation failed: ${prError.message}`);
       }
     }
   }
@@ -196,6 +205,7 @@ export async function prepareTagMode({
     "mcp__github_ci__get_ci_status",
     "mcp__github_ci__get_workflow_run_details",
     "mcp__github_ci__download_job_log",
+    "Bash(gh pr edit:*)",
     ...userAllowedMCPTools,
   ];
 
@@ -207,6 +217,8 @@ export async function prepareTagMode({
       "Bash(git commit:*)",
       `Bash(${gitPushWrapper}:*)`,
       "Bash(git rm:*)",
+      "Bash(git fetch:*)",
+      "Bash(git rebase:*)",
     );
   } else {
     // When using API commit signing, use MCP file ops tools

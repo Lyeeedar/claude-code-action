@@ -583,7 +583,7 @@ ${getCommitInstructions(eventData, githubData, context, useCommitSigning)}
 ${
   eventData.claudeBranch
     ? context.draftPrUrl
-      ? `\nA draft PR has already been created for your changes: ${context.draftPrUrl}\nJust commit and push your changes — no need to create a PR link.`
+      ? `\nA draft PR has already been created for your changes: ${context.draftPrUrl}\nJust commit and push your changes — no need to create a PR link.\nAs your FINAL step, update the PR title and description:\ngh pr edit ${context.draftPrUrl} --title "<short title>" --body "<markdown summary of what changed and why>"`
       : `\nWhen done with changes, provide a PR link:\n[Create a PR](${GITHUB_SERVER_URL}/${context.repository}/compare/${eventData.baseBranch}...${eventData.claudeBranch}?quick_pull=1&title=<url-encoded-title>&body=<url-encoded-body>)\nUse THREE dots (...) between branches. URL-encode all parameters.`
     : ""
 }
@@ -769,7 +769,7 @@ ${eventData.eventName === "issue_comment" || eventData.eventName === "pull_reque
       ${
         eventData.claudeBranch
           ? context.draftPrUrl
-            ? `- A draft PR has already been created for your work: ${context.draftPrUrl}\n        Just commit and push your changes — the PR will update automatically. Do not create another PR link.`
+            ? `- A draft PR has already been created for your work: ${context.draftPrUrl}\n        Just commit and push your changes — the PR will update automatically. Do not create another PR link.\n        As your FINAL step (after all commits are pushed), update the PR title and description with a clear summary of what you did:\n        gh pr edit ${context.draftPrUrl} --title "<short descriptive title>" --body "<markdown summary: what changed, why, any important notes>"`
             : `- Provide a URL to create a PR manually in this format:
         [Create a PR](${GITHUB_SERVER_URL}/${context.repository}/compare/${eventData.baseBranch}...<branch-name>?quick_pull=1&title=<url-encoded-title>&body=<url-encoded-body>)
         - IMPORTANT: Use THREE dots (...) between branch names, not two (..)
@@ -797,7 +797,7 @@ ${eventData.eventName === "issue_comment" || eventData.eventName === "pull_reque
    - When all todos are completed, remove the spinner and add a brief summary of what was accomplished, and what was not done.
    - Note: If you see previous Claude comments with headers like "**Claude finished @user's task**" followed by "---", do not include this in your comment. The system adds this automatically.
    - If you changed any files locally, you must update them in the remote branch via ${useCommitSigning ? "mcp__github_file_ops__commit_files" : "git commands (add, commit, push)"} before saying that you're done.
-   ${eventData.claudeBranch ? context.draftPrUrl ? `- A draft PR already exists at ${context.draftPrUrl} — include this link in your comment.` : `- If you created anything in your branch, your comment must include the PR URL with prefilled title and body mentioned above.` : ""}
+   ${eventData.claudeBranch ? context.draftPrUrl ? `- A draft PR already exists at ${context.draftPrUrl} — include this link in your comment.\n   - REQUIRED final step: update the PR title and description to summarise your work:\n     gh pr edit ${context.draftPrUrl} --title "<short title>" --body "<markdown: what changed, why, any caveats>"` : `- If you created anything in your branch, your comment must include the PR URL with prefilled title and body mentioned above.` : ""}
 
 Important Notes:
 - All communication must happen through GitHub PR comments.
