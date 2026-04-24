@@ -32,7 +32,7 @@ jobs:
           bun-version: latest
 
       - name: Install compiler dependencies
-        run: bun install
+        run: bun install --no-frozen-lockfile
         working-directory: .claude-action
 
       - name: Compile agent tasks
