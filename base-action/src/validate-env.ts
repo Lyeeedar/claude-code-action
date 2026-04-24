@@ -11,7 +11,7 @@ export function validateEnvironmentVariables() {
     throw new Error(
       "Model proxy is not configured. " +
         "ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN must be set before running Claude Code. " +
-        "Ensure 'xai_api_key' or 'openai_api_key' is provided so the proxy can start.",
+        "Ensure 'xai_api_key', 'openai_api_key', or 'minimax_api_key' is provided so the proxy can start.",
     );
   }
 }

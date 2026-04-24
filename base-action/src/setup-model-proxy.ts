@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 const PROXY_PORT = 4001;
-const SUPPORTED_PROVIDERS = ["openai", "xai"] as const;
+const SUPPORTED_PROVIDERS = ["openai", "xai", "minimax"] as const;
 type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 
 interface ParsedModel {
@@ -16,14 +16,17 @@ interface ParsedModel {
 /**
  * Parse a model spec of the form "provider/model-name" or just "model-name"
  * (bare names default to the openai backend).
- * Examples: "xai/grok-4-1-fast-non-reasoning", "openai/GPT-5.3-Codex", "GPT-5.4"
+ * Examples: "xai/grok-4-1-fast-non-reasoning", "minimax/MiniMax-M2.7-highspeed", "gpt-4o"
+ *
+ * Provider prefix is lowercased for matching; model name casing is preserved
+ * because some APIs (MiniMax) are case-sensitive.
  */
 function parseModelSpec(spec: string): ParsedModel {
   const slashIdx = spec.indexOf("/");
   if (slashIdx !== -1) {
     const prefix = spec.slice(0, slashIdx).toLowerCase();
     if ((SUPPORTED_PROVIDERS as readonly string[]).includes(prefix)) {
-      const modelName = spec.slice(slashIdx + 1).toLowerCase();
+      const modelName = spec.slice(slashIdx + 1);
       return {
         provider: prefix as SupportedProvider,
         modelName,
@@ -31,7 +34,7 @@ function parseModelSpec(spec: string): ParsedModel {
       };
     }
   }
-  const modelName = spec.toLowerCase();
+  const modelName = spec;
   return {
     provider: "openai",
     modelName,
@@ -40,7 +43,9 @@ function parseModelSpec(spec: string): ParsedModel {
 }
 
 function apiKeyEnvName(provider: SupportedProvider): string {
-  return provider === "xai" ? "XAI_API_KEY" : "OPENAI_API_KEY";
+  if (provider === "xai") return "XAI_API_KEY";
+  if (provider === "minimax") return "MINIMAX_API_KEY";
+  return "OPENAI_API_KEY";
 }
 
 function buildLiteLLMConfig(models: ParsedModel[]): string {
@@ -119,11 +124,12 @@ export async function setupModelProxy(
   largeSpec: string,
   xaiApiKey: string,
   openaiApiKey: string,
+  minimaxApiKey: string,
 ): Promise<void> {
   if (!mediumSpec) throw new Error("'model' (medium tier) is required");
-  if (!xaiApiKey && !openaiApiKey)
+  if (!xaiApiKey && !openaiApiKey && !minimaxApiKey)
     throw new Error(
-      "At least one of 'xai_api_key' or 'openai_api_key' must be provided",
+      "At least one of 'xai_api_key', 'openai_api_key', or 'minimax_api_key' must be provided",
     );
 
   const small = parseModelSpec(smallSpec || mediumSpec);
@@ -132,6 +138,7 @@ export async function setupModelProxy(
 
   if (xaiApiKey) process.env.XAI_API_KEY = xaiApiKey;
   if (openaiApiKey) process.env.OPENAI_API_KEY = openaiApiKey;
+  if (minimaxApiKey) process.env.MINIMAX_API_KEY = minimaxApiKey;
 
   installLiteLLM();
 

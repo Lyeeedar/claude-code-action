@@ -16,6 +16,7 @@ async function run() {
       process.env.MODEL_LARGE || process.env.MODEL_MEDIUM || "",
       process.env.XAI_API_KEY || "",
       process.env.OPENAI_API_KEY || "",
+      process.env.MINIMAX_API_KEY || "",
     );
 
     validateEnvironmentVariables();
