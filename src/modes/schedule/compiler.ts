@@ -227,10 +227,15 @@ function generateWorkflowYaml(task: CompiledTask, actionRef: string): string {
     ? `\n          # Steering issue: ${task.steeringIssue}`
     : "";
 
+  const titleDescription = task.name
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+
   return `# AUTO-GENERATED — do not edit manually
 # Source: .github/agents/${task.name}.md
 # To change the schedule or settings, edit the source file and push.
-name: "Agent: ${task.description}"
+name: "[Agent] ${titleDescription}"
 
 on:
   schedule:
