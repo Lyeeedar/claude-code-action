@@ -255,6 +255,76 @@ export async function updateCommentLink(
     );
     throw updateError;
   }
+
+  // Finalize the draft PR: remove [WIP] from title, and fill in the description
+  // if Claude didn't update it (detected via placeholder marker).
+  if (existingPrUrl && !shouldDeleteBranch) {
+    await finalizePr({
+      prUrl: existingPrUrl,
+      owner,
+      repo,
+      octokit,
+      claudeSuccess: params.claudeSuccess,
+      trackingCommentBody: updatedBody,
+    });
+  }
+}
+
+function extractPrNumber(prUrl: string): number | undefined {
+  const match = prUrl.match(/\/pull\/(\d+)/);
+  return match ? parseInt(match[1]) : undefined;
+}
+
+async function finalizePr({
+  prUrl,
+  owner,
+  repo,
+  octokit,
+  claudeSuccess,
+  trackingCommentBody,
+}: {
+  prUrl: string;
+  owner: string;
+  repo: string;
+  octokit: Octokits;
+  claudeSuccess: boolean;
+  trackingCommentBody: string;
+}): Promise<void> {
+  const prNumber = extractPrNumber(prUrl);
+  if (!prNumber) return;
+
+  try {
+    const { data: pr } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
+
+    const titleUpdates: { title?: string; body?: string } = {};
+
+    // Remove [WIP] prefix now that the agent has finished
+    if (pr.title.startsWith("[WIP] ")) {
+      titleUpdates.title = pr.title.replace(/^\[WIP\]\s*/, "");
+      if (!claudeSuccess) {
+        titleUpdates.title = `[INCOMPLETE] ${titleUpdates.title}`;
+      }
+    }
+
+    // If Claude never updated the description (placeholder still present),
+    // fall back to the tracking comment body so the PR has meaningful content.
+    if (pr.body?.includes("<!-- claude-pr-placeholder -->")) {
+      console.log("PR description not updated by agent — using tracking comment as fallback");
+      titleUpdates.body = trackingCommentBody;
+    }
+
+    if (titleUpdates.title || titleUpdates.body) {
+      await octokit.rest.pulls.update({
+        owner,
+        repo,
+        pull_number: prNumber,
+        ...titleUpdates,
+      });
+      console.log(`✅ Finalized PR #${prNumber} (removed [WIP], updated description)`);
+    }
+  } catch (err) {
+    console.error(`Failed to finalize PR #${prNumber}:`, err);
+  }
 }
 
 async function run() {

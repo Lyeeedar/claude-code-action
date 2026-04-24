@@ -144,8 +144,28 @@ export async function prepareTagMode({
       }
     } catch {}
 
+    const wipTitle = `[WIP] ${originalTitle || `Issue #${context.entityNumber}`}`;
+    const prPlaceholderBody =
+      `<!-- claude-pr-placeholder -->\n` +
+      `_Work in progress — the agent will update this description when done._\n\n` +
+      `Addresses issue #${context.entityNumber}\n\n` +
+      `Generated with [Claude Code](https://claude.ai/code)`;
+
     if (existingPrUrl) {
       draftPrUrl = existingPrUrl;
+      // Ensure existing PR has [WIP] prefix so it's clear work is ongoing
+      try {
+        const prNum = parseInt(existingPrUrl.match(/\/pull\/(\d+)/)?.[1] ?? "0");
+        if (prNum) {
+          const { data: existingPr } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNum });
+          if (!existingPr.title.startsWith("[WIP]")) {
+            await octokit.rest.pulls.update({
+              owner, repo, pull_number: prNum,
+              title: `[WIP] ${existingPr.title}`,
+            });
+          }
+        }
+      } catch {}
     } else {
       // Make an empty commit so GitHub allows draft PR creation before any real
       // changes exist (GitHub rejects PRs with no commits between base and head).
@@ -161,8 +181,8 @@ export async function prepareTagMode({
         const { data: pr } = await octokit.rest.pulls.create({
           owner,
           repo,
-          title: `Issue #${context.entityNumber}: Changes from Claude`,
-          body: `Addresses issue #${context.entityNumber}\n\nGenerated with [Claude Code](https://claude.ai/code)`,
+          title: wipTitle,
+          body: prPlaceholderBody,
           head: branchInfo.claudeBranch,
           base: branchInfo.baseBranch || context.repository.default_branch,
           draft: true,
