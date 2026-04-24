@@ -244,6 +244,11 @@ export async function prepareTagMode({
       "Bash(git rm:*)",
       "Bash(git fetch:*)",
       "Bash(git rebase:*)",
+      "Bash(git checkout:*)",
+      "Bash(git diff:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git stash:*)",
     );
   } else {
     // When using API commit signing, use MCP file ops tools

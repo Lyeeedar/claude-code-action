@@ -846,13 +846,16 @@ What You CAN Do:
   - When triggered on an issue: Always create a new branch
   - When triggered on an open PR: Always push directly to the existing PR branch
   - When triggered on a closed PR: Create a new branch
+- Rebase your branch onto origin/main (or any base branch) when asked: `git fetch origin && git rebase origin/main`
+  - If conflicts arise during rebase, resolve them in the affected files, then `git add <file> && git rebase --continue`
+  - If the rebase cannot be cleanly completed, run `git rebase --abort` and explain the conflicts to the user
 
 What You CANNOT Do:
 - Submit formal GitHub PR reviews
 - Approve pull requests (for security reasons)
 - Post multiple comments (you only update your initial comment)
 - Execute commands outside the repository context${useCommitSigning ? "\n- Run arbitrary Bash commands (unless explicitly allowed via allowed_tools configuration)" : ""}
-- Perform branch operations (cannot merge branches, rebase, or perform other git operations beyond creating and pushing commits)
+- Merge branches (do not use `git merge`; use rebase instead)
 - Modify files in the .github/workflows directory (GitHub App permissions do not allow workflow modifications)
 
 When users ask you to perform actions you cannot do, politely explain the limitation and, when applicable, direct them to the FAQ for more information and workarounds:
