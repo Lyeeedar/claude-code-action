@@ -4,6 +4,93 @@ import { load as parseYaml } from "js-yaml";
 import { parseHumanSchedule, assignCronExpression } from "./balancer";
 import type { ScheduleSpec } from "./balancer";
 
+/**
+ * Create a steering issue for a task via the GitHub API and return its number.
+ * Returns undefined if no token / repo info is available (local runs).
+ */
+async function createSteeringIssue(
+  task: { name: string; description: string; schedule: ScheduleSpec },
+  githubToken: string,
+  owner: string,
+  repo: string,
+): Promise<number | undefined> {
+  const scheduleLabel =
+    task.schedule.kind === "interval"
+      ? `every ${task.schedule.hours} hours`
+      : task.schedule.kind;
+
+  const body = [
+    `## Agent Steering Issue`,
+    ``,
+    `This issue controls the **${task.name}** scheduled agent.`,
+    ``,
+    `**How to use:** Post a comment here to redirect, adjust, or pause the agent.`,
+    `All comments are injected into the agent's prompt on every run, so directives accumulate — you don't need to repeat previous instructions.`,
+    ``,
+    `To pause: comment \`PAUSE\` and the agent will stop acting until you comment \`RESUME\`.`,
+    ``,
+    `**Description:** ${task.description}`,
+    `**Schedule:** ${scheduleLabel}`,
+    `**Workflow:** \`.github/workflows/agent-${task.name}.yml\``,
+  ].join("\n");
+
+  const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${githubToken}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      title: `[Agent] ${task.description}`,
+      body,
+      labels: ["agent-steering"],
+    }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    // Label may not exist — retry without labels
+    if (resp.status === 422 && text.includes("Label does not exist")) {
+      const resp2 = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: "application/vnd.github+json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ title: `[Agent] ${task.description}`, body }),
+      });
+      if (!resp2.ok) {
+        console.warn(`  Could not create steering issue: ${await resp2.text()}`);
+        return undefined;
+      }
+      const data = (await resp2.json()) as { number: number };
+      return data.number;
+    }
+    console.warn(`  Could not create steering issue: ${text}`);
+    return undefined;
+  }
+
+  const data = (await resp.json()) as { number: number };
+  return data.number;
+}
+
+/**
+ * Patch the task file's frontmatter to add/update `steering-issue: <number>`.
+ */
+function patchSteeringIssue(filePath: string, issueNumber: number): void {
+  const content = readFileSync(filePath, "utf-8");
+  // Find the closing --- of the frontmatter
+  const secondDash = content.indexOf("\n---", 4);
+  if (secondDash === -1) return;
+  const patched =
+    content.slice(0, secondDash) +
+    `\nsteering-issue: ${issueNumber}` +
+    content.slice(secondDash);
+  writeFileSync(filePath, patched, "utf-8");
+}
+
 export type TaskPermissions = {
   contents?: "read" | "write";
   issues?: "read" | "write";
@@ -138,9 +225,11 @@ export type CompileOptions = {
   tasksDir: string; // e.g. ".github/agents"
   workflowsDir: string; // e.g. ".github/workflows"
   actionRef?: string; // e.g. "Lyeeedar/claude-code-action@main"
+  /** If provided, creates steering issues for new tasks and patches the source file. */
+  github?: { token: string; owner: string; repo: string };
 };
 
-export function compileAgentTasks(opts: CompileOptions): CompiledTask[] {
+export async function compileAgentTasks(opts: CompileOptions): Promise<CompiledTask[]> {
   const { tasksDir, workflowsDir } = opts;
   const actionRef =
     opts.actionRef ??
@@ -210,6 +299,23 @@ export function compileAgentTasks(opts: CompileOptions): CompiledTask[] {
     const permissions = (raw.permissions as TaskPermissions | undefined) ?? {};
     const extraEnv = (raw["extra-env"] as Record<string, string> | undefined) ?? {};
 
+    let steeringIssue: number | undefined =
+      typeof raw["steering-issue"] === "number" ? raw["steering-issue"] : undefined;
+
+    // Auto-create steering issue if not already set
+    if (!steeringIssue && opts.github) {
+      const { token, owner, repo } = opts.github;
+      const issueNum = await createSteeringIssue(
+        { name: slug, description, schedule: scheduleSpec },
+        token, owner, repo,
+      );
+      if (issueNum) {
+        steeringIssue = issueNum;
+        patchSteeringIssue(filePath, issueNum);
+        console.log(`  Created steering issue #${issueNum} for ${slug}`);
+      }
+    }
+
     const task: CompiledTask = {
       name: slug,
       description,
@@ -218,7 +324,7 @@ export function compileAgentTasks(opts: CompileOptions): CompiledTask[] {
       timeoutMinutes: typeof raw["timeout-minutes"] === "number" ? raw["timeout-minutes"] : 30,
       permissions,
       extraEnv,
-      steeringIssue: typeof raw["steering-issue"] === "number" ? raw["steering-issue"] : undefined,
+      steeringIssue,
       enabled,
       sourcePath: filePath,
     };
@@ -227,7 +333,7 @@ export function compileAgentTasks(opts: CompileOptions): CompiledTask[] {
     const outPath = join(workflowsDir, `agent-${slug}.yml`);
     writeFileSync(outPath, yaml, "utf-8");
     console.log(
-      `  Compiled ${slug} → agent-${slug}.yml  [cron: ${cronExpression}]`,
+      `  Compiled ${slug} → agent-${slug}.yml  [cron: ${cronExpression}]${steeringIssue ? `  [steering: #${steeringIssue}]` : ""}`,
     );
     compiled.push(task);
   }

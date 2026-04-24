@@ -22,7 +22,19 @@ console.log(`Compiling agent tasks...`);
 console.log(`  Tasks dir:     ${tasksDir}`);
 console.log(`  Workflows dir: ${workflowsDir}`);
 
-const compiled = compileAgentTasks({ tasksDir, workflowsDir, actionRef });
+const githubToken = process.env.GITHUB_TOKEN;
+const githubRepository = process.env.GITHUB_REPOSITORY; // "owner/repo"
+const [owner, repo] = githubRepository?.split("/") ?? [];
+
+const compiled = await compileAgentTasks({
+  tasksDir,
+  workflowsDir,
+  actionRef,
+  github:
+    githubToken && owner && repo
+      ? { token: githubToken, owner, repo }
+      : undefined,
+});
 
 if (compiled.length === 0) {
   console.log("No tasks found.");
