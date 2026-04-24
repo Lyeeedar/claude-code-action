@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 
 const PROXY_PORT = 4001;
+const MINIMAX_ANTHROPIC_BASE_URL = "https://api.minimax.io/anthropic";
 const SUPPORTED_PROVIDERS = ["openai", "xai", "minimax"] as const;
 type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 
@@ -16,7 +17,7 @@ interface ParsedModel {
 /**
  * Parse a model spec of the form "provider/model-name" or just "model-name"
  * (bare names default to the openai backend).
- * Examples: "xai/grok-4-1-fast-non-reasoning", "minimax/MiniMax-M2.7-highspeed", "gpt-4o"
+ * Examples: "xai/grok-4-1-fast-non-reasoning", "minimax/MiniMax-M2.7", "gpt-4o"
  *
  * Provider prefix is lowercased for matching; model name casing is preserved
  * because some APIs (MiniMax) are case-sensitive.
@@ -103,20 +104,24 @@ async function waitForProxy(
 }
 
 /**
- * Start a LiteLLM proxy that translates Anthropic-format requests from Claude
- * Code into OpenAI or xAI API calls, then sets ANTHROPIC_BASE_URL to point
- * Claude Code at it.
+ * Configure the model backend for Claude Code.
  *
- * Model specs use "provider/model-name" format (e.g. "xai/grok-4-1-fast-non-reasoning").
+ * When ALL three tiers use the "minimax" provider, skips LiteLLM entirely and
+ * points ANTHROPIC_BASE_URL directly at MiniMax's native Anthropic-compatible
+ * endpoint. This avoids parameter translation issues and removes the proxy
+ * overhead.
+ *
+ * For mixed-provider setups (e.g. xAI for small, OpenAI for medium/large),
+ * starts a LiteLLM proxy that translates Anthropic-format requests from Claude
+ * Code into the appropriate provider API calls.
+ *
+ * Model specs use "provider/model-name" format (e.g. "minimax/MiniMax-M2.7").
  * Bare names default to the openai backend.
  *
  * Tier mapping (what Claude Code routes internally):
  *   haiku  → small spec  (fast / cheap — used by Claude Code for lightweight tasks)
  *   sonnet → medium spec (the default for almost all work)
  *   opus   → large spec  (complex reasoning, rarely selected)
- *
- * To enforce "almost always medium", pass the same medium spec for both
- * smallSpec and mediumSpec so the haiku tier also routes to the medium model.
  */
 export async function setupModelProxy(
   smallSpec: string,
@@ -140,33 +145,54 @@ export async function setupModelProxy(
   if (openaiApiKey) process.env.OPENAI_API_KEY = openaiApiKey;
   if (minimaxApiKey) process.env.MINIMAX_API_KEY = minimaxApiKey;
 
-  installLiteLLM();
+  // If all tiers use MiniMax, skip LiteLLM and point directly at MiniMax's
+  // native Anthropic-compatible endpoint. This avoids parameter translation
+  // issues that occur when LiteLLM proxies Anthropic-format requests to MiniMax.
+  const allMinimax =
+    small.provider === "minimax" &&
+    medium.provider === "minimax" &&
+    large.provider === "minimax";
 
-  const configPath = join(tmpdir(), "litellm-config.yaml");
-  writeFileSync(configPath, buildLiteLLMConfig([small, medium, large]));
+  if (allMinimax) {
+    if (!minimaxApiKey)
+      throw new Error("'minimax_api_key' is required when using MiniMax models");
 
-  console.log(
-    `Starting LiteLLM proxy on port ${PROXY_PORT}...\n` +
-      `  haiku  → ${small.modelName} (${small.provider})\n` +
-      `  sonnet → ${medium.modelName} (${medium.provider})  ← default\n` +
-      `  opus   → ${large.modelName} (${large.provider})`,
-  );
+    console.log(
+      `Using MiniMax direct endpoint (no proxy):\n` +
+        `  haiku  → ${small.modelName}\n` +
+        `  sonnet → ${medium.modelName}  ← default\n` +
+        `  opus   → ${large.modelName}`,
+    );
 
-  const child = spawn(
-    "litellm",
-    ["--config", configPath, "--port", String(PROXY_PORT)],
-    { env: process.env, stdio: "inherit", detached: false },
-  );
+    process.env.ANTHROPIC_BASE_URL = MINIMAX_ANTHROPIC_BASE_URL;
+    process.env.ANTHROPIC_API_KEY = minimaxApiKey;
+    process.env.ANTHROPIC_AUTH_TOKEN = "";
+  } else {
+    installLiteLLM();
 
-  // unref so the child process doesn't prevent the parent from exiting after
-  // Claude Code finishes (with or without an error).
-  await waitForProxy(PROXY_PORT, child);
+    const configPath = join(tmpdir(), "litellm-config.yaml");
+    writeFileSync(configPath, buildLiteLLMConfig([small, medium, large]));
 
-  child.unref();
+    console.log(
+      `Starting LiteLLM proxy on port ${PROXY_PORT}...\n` +
+        `  haiku  → ${small.modelName} (${small.provider})\n` +
+        `  sonnet → ${medium.modelName} (${medium.provider})  ← default\n` +
+        `  opus   → ${large.modelName} (${large.provider})`,
+    );
 
-  process.env.ANTHROPIC_BASE_URL = `http://localhost:${PROXY_PORT}`;
-  process.env.ANTHROPIC_AUTH_TOKEN = "litellm-proxy";
-  process.env.ANTHROPIC_API_KEY = "";
+    const child = spawn(
+      "litellm",
+      ["--config", configPath, "--port", String(PROXY_PORT)],
+      { env: process.env, stdio: "inherit", detached: false },
+    );
+
+    await waitForProxy(PROXY_PORT, child);
+    child.unref();
+
+    process.env.ANTHROPIC_BASE_URL = `http://localhost:${PROXY_PORT}`;
+    process.env.ANTHROPIC_AUTH_TOKEN = "litellm-proxy";
+    process.env.ANTHROPIC_API_KEY = "";
+  }
 
   // Set all four model env vars so Claude Code routes each tier correctly
   process.env.ANTHROPIC_MODEL = medium.modelName;
@@ -174,5 +200,5 @@ export async function setupModelProxy(
   process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = small.modelName;
   process.env.ANTHROPIC_DEFAULT_OPUS_MODEL = large.modelName;
 
-  console.log("LiteLLM proxy ready.");
+  console.log("Model backend configured.");
 }
