@@ -21,20 +21,21 @@ interface ParsedModel {
 function parseModelSpec(spec: string): ParsedModel {
   const slashIdx = spec.indexOf("/");
   if (slashIdx !== -1) {
-    const prefix = spec.slice(0, slashIdx);
+    const prefix = spec.slice(0, slashIdx).toLowerCase();
     if ((SUPPORTED_PROVIDERS as readonly string[]).includes(prefix)) {
-      const modelName = spec.slice(slashIdx + 1);
+      const modelName = spec.slice(slashIdx + 1).toLowerCase();
       return {
         provider: prefix as SupportedProvider,
         modelName,
-        litellmTarget: spec,
+        litellmTarget: `${prefix}/${modelName}`,
       };
     }
   }
+  const modelName = spec.toLowerCase();
   return {
     provider: "openai",
-    modelName: spec,
-    litellmTarget: `openai/${spec}`,
+    modelName,
+    litellmTarget: `openai/${modelName}`,
   };
 }
 
