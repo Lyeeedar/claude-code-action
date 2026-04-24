@@ -416,7 +416,7 @@ async function run() {
       octokit &&
       isEntityContext(context) &&
       !context.isPR &&
-      context.issue?.number
+      context.entityNumber
     ) {
       try {
         await patchPRWithIssueLink(
@@ -424,7 +424,7 @@ async function run() {
           context.repository.owner,
           context.repository.repo,
           claudeBranch,
-          context.issue.number,
+          context.entityNumber,
         );
       } catch (err) {
         console.warn(`Could not patch PR with issue link: ${err}`);
