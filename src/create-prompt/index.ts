@@ -9,6 +9,8 @@ import {
   formatComments,
   formatReviewComments,
   formatChangedFilesWithSHA,
+  formatLinkedIssues,
+  formatLinkedPullRequests,
 } from "../github/data/formatter";
 import { sanitizeContent } from "../github/utils/sanitizer";
 import {
@@ -494,6 +496,8 @@ function generateSimplePrompt(
     changedFilesWithSHA,
     reviewData,
     imageUrlMap,
+    linkedIssues,
+    linkedPullRequests,
   } = githubData;
   const { eventData } = context;
 
@@ -507,6 +511,8 @@ function generateSimplePrompt(
   const formattedChangedFiles = eventData.isPR
     ? formatChangedFilesWithSHA(changedFilesWithSHA)
     : "";
+  const formattedLinkedIssues = formatLinkedIssues(linkedIssues, imageUrlMap);
+  const formattedLinkedPRs = formatLinkedPullRequests(linkedPullRequests, imageUrlMap);
 
   const hasImages = imageUrlMap && imageUrlMap.size > 0;
   const imagePaths = hasImages ? Array.from(imageUrlMap!.values()) : [];
@@ -549,6 +555,14 @@ ${formattedReviewComments || "No review comments"}
 <changed_files>
 ${formattedChangedFiles || "No files changed"}
 </changed_files>`
+    : ""
+}${
+  formattedLinkedIssues
+    ? `\n\n<linked_issues>\n${formattedLinkedIssues}\n</linked_issues>`
+    : ""
+}${
+  formattedLinkedPRs
+    ? `\n\n<linked_pull_requests>\n${formattedLinkedPRs}\n</linked_pull_requests>`
     : ""
 }${imagesInfo}
 
@@ -618,6 +632,8 @@ export function generateDefaultPrompt(
     changedFilesWithSHA,
     reviewData,
     imageUrlMap,
+    linkedIssues,
+    linkedPullRequests,
   } = githubData;
   const { eventData } = context;
 
@@ -631,6 +647,8 @@ export function generateDefaultPrompt(
   const formattedChangedFiles = eventData.isPR
     ? formatChangedFilesWithSHA(changedFilesWithSHA)
     : "";
+  const formattedLinkedIssues = formatLinkedIssues(linkedIssues, imageUrlMap);
+  const formattedLinkedPRs = formatLinkedPullRequests(linkedPullRequests, imageUrlMap);
 
   // Check if any images were downloaded
   const hasImages = imageUrlMap && imageUrlMap.size > 0;
@@ -677,6 +695,18 @@ ${
     ? `<changed_files>
 ${formattedChangedFiles || "No files changed"}
 </changed_files>`
+    : ""
+}${
+  formattedLinkedIssues
+    ? `\n\n<linked_issues>
+${formattedLinkedIssues}
+</linked_issues>`
+    : ""
+}${
+  formattedLinkedPRs
+    ? `\n\n<linked_pull_requests>
+${formattedLinkedPRs}
+</linked_pull_requests>`
     : ""
 }${imagesInfo}
 

@@ -4,6 +4,8 @@ import type {
   GitHubComment,
   GitHubFile,
   GitHubReview,
+  LinkedIssue,
+  LinkedPullRequest,
 } from "../types";
 import type { GitHubFileWithSHA } from "./fetcher";
 import { sanitizeContent } from "../utils/sanitizer";
@@ -132,6 +134,44 @@ export function formatChangedFiles(changedFiles: GitHubFile[]): string {
         `- ${file.path} (${file.changeType}) +${file.additions}/-${file.deletions}`,
     )
     .join("\n");
+}
+
+export function formatLinkedIssues(
+  issues: LinkedIssue[],
+  imageUrlMap?: Map<string, string>,
+): string {
+  if (issues.length === 0) return "";
+  return issues
+    .map((issue) => {
+      const body = formatBody(issue.body || "", imageUrlMap ?? new Map());
+      const comments = formatComments(issue.comments.nodes, imageUrlMap);
+      let out = `### Linked Issue #${issue.number}: ${sanitizeContent(issue.title)}
+Author: ${issue.author.login} | State: ${issue.state}
+
+${body}`;
+      if (comments) out += `\n\n**Comments:**\n${comments}`;
+      return out;
+    })
+    .join("\n\n---\n\n");
+}
+
+export function formatLinkedPullRequests(
+  prs: LinkedPullRequest[],
+  imageUrlMap?: Map<string, string>,
+): string {
+  if (prs.length === 0) return "";
+  return prs
+    .map((pr) => {
+      const body = formatBody(pr.body || "", imageUrlMap ?? new Map());
+      const comments = formatComments(pr.comments.nodes, imageUrlMap);
+      let out = `### Linked PR #${pr.number}: ${sanitizeContent(pr.title)}
+Author: ${pr.author.login} | State: ${pr.state} | Branch: ${pr.headRefName} -> ${pr.baseRefName}
+
+${body}`;
+      if (comments) out += `\n\n**Comments:**\n${comments}`;
+      return out;
+    })
+    .join("\n\n---\n\n");
 }
 
 export function formatChangedFilesWithSHA(

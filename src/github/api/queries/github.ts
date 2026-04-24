@@ -95,6 +95,34 @@ export const PR_QUERY = `
             }
           }
         }
+        closingIssuesReferences(first: 10) {
+          nodes {
+            number
+            title
+            body
+            author {
+              login
+            }
+            createdAt
+            updatedAt
+            lastEditedAt
+            state
+            comments(first: 50) {
+              nodes {
+                id
+                databaseId
+                body
+                author {
+                  login
+                }
+                createdAt
+                updatedAt
+                lastEditedAt
+                isMinimized
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -130,6 +158,42 @@ export const ISSUE_QUERY = `
             updatedAt
             lastEditedAt
             isMinimized
+          }
+        }
+        timelineItems(first: 25, itemTypes: [CROSS_REFERENCED_EVENT]) {
+          nodes {
+            ... on CrossReferencedEvent {
+              source {
+                ... on PullRequest {
+                  number
+                  title
+                  body
+                  author {
+                    login
+                  }
+                  state
+                  baseRefName
+                  headRefName
+                  additions
+                  deletions
+                  createdAt
+                  comments(first: 25) {
+                    nodes {
+                      id
+                      databaseId
+                      body
+                      author {
+                        login
+                      }
+                      createdAt
+                      updatedAt
+                      lastEditedAt
+                      isMinimized
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
