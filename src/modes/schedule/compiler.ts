@@ -256,6 +256,9 @@ jobs:
           workflow_file: .github/agents/${task.name}.md
           github_token: \${{ secrets.GITHUB_TOKEN }}
           anthropic_api_key: \${{ secrets.ANTHROPIC_API_KEY }}
+          minimax_api_key: \${{ secrets.MINIMAX_API_KEY }}
+          xai_api_key: \${{ secrets.XAI_API_KEY }}
+          openai_api_key: \${{ secrets.OPENAI_API_KEY }}
 ${envLines ? `        env:\n${envLines}` : ""}
 `;
 }
