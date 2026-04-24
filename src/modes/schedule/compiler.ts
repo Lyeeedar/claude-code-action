@@ -8,6 +8,39 @@ import type { ScheduleSpec } from "./balancer";
  * Create a steering issue for a task via the GitHub API and return its number.
  * Returns undefined if no token / repo info is available (local runs).
  */
+/**
+ * Search for an existing open steering issue for this task.
+ * Matches by the marker line in the issue body.
+ */
+async function findExistingSteeringIssue(
+  taskName: string,
+  githubToken: string,
+  owner: string,
+  repo: string,
+): Promise<number | undefined> {
+  const marker = `This issue controls the **${taskName}** scheduled agent.`;
+  let page = 1;
+  while (true) {
+    const resp = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/issues?labels=agent-steering&state=open&per_page=100&page=${page}`,
+      {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Accept: "application/vnd.github+json",
+        },
+      },
+    );
+    if (!resp.ok) return undefined;
+    const issues = (await resp.json()) as { number: number; body?: string }[];
+    if (issues.length === 0) return undefined;
+    for (const issue of issues) {
+      if (issue.body?.includes(marker)) return issue.number;
+    }
+    if (issues.length < 100) return undefined;
+    page++;
+  }
+}
+
 async function createSteeringIssue(
   task: { name: string; description: string; schedule: ScheduleSpec },
   githubToken: string,
@@ -18,6 +51,12 @@ async function createSteeringIssue(
     task.schedule.kind === "interval"
       ? `every ${task.schedule.hours} hours`
       : task.schedule.kind;
+
+  // Derive a short title from the task slug: "mod-doc-updater" → "Mod Doc Updater"
+  const titleDescription = task.name
+    .split("-")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 
   const body = [
     `## Agent Steering Issue`,
@@ -42,7 +81,7 @@ async function createSteeringIssue(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      title: `[Agent] ${task.description}`,
+      title: `[Agent] ${titleDescription}`,
       body,
       labels: ["agent-steering"],
     }),
@@ -59,7 +98,7 @@ async function createSteeringIssue(
           Accept: "application/vnd.github+json",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ title: `[Agent] ${task.description}`, body }),
+        body: JSON.stringify({ title: `[Agent] ${titleDescription}`, body }),
       });
       if (!resp2.ok) {
         console.warn(`  Could not create steering issue: ${await resp2.text()}`);
@@ -305,14 +344,22 @@ export async function compileAgentTasks(opts: CompileOptions): Promise<CompiledT
     // Auto-create steering issue if not already set
     if (!steeringIssue && opts.github) {
       const { token, owner, repo } = opts.github;
-      const issueNum = await createSteeringIssue(
-        { name: slug, description, schedule: scheduleSpec },
-        token, owner, repo,
-      );
-      if (issueNum) {
-        steeringIssue = issueNum;
-        patchSteeringIssue(filePath, issueNum);
-        console.log(`  Created steering issue #${issueNum} for ${slug}`);
+      // Check for an existing issue first to avoid duplicates
+      const existing = await findExistingSteeringIssue(slug, token, owner, repo);
+      if (existing) {
+        steeringIssue = existing;
+        patchSteeringIssue(filePath, existing);
+        console.log(`  Found existing steering issue #${existing} for ${slug}`);
+      } else {
+        const issueNum = await createSteeringIssue(
+          { name: slug, description, schedule: scheduleSpec },
+          token, owner, repo,
+        );
+        if (issueNum) {
+          steeringIssue = issueNum;
+          patchSteeringIssue(filePath, issueNum);
+          console.log(`  Created steering issue #${issueNum} for ${slug}`);
+        }
       }
     }
 
