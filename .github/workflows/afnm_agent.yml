@@ -32,19 +32,23 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Run Agent
         id: agent
-        uses: ./
+        uses: Lyeeedar/claude-code-action@main
         with:
-          # Trigger configuration
+          github_token: ${{ steps.app-token.outputs.token }}
           trigger_phrase: "@agent"
-          assignee_trigger: "agent"
+          assignee_trigger: "agent[bot]"
           label_trigger: "agent"
           auto_fix_pr_reviews: "true"
           bot_name: "agent[bot]"
-
-          # Models — small uses xAI (fast), medium+large use OpenAI
-          # Claude Code uses sonnet tier (medium) for almost all work
           model_cheap: "xai/grok-4-1-fast-non-reasoning"
           model: "openai/GPT-5.3-Codex"
           model_expensive: "openai/GPT-5.4"
