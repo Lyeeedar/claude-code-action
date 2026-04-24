@@ -50,7 +50,7 @@ jobs:
           auto_fix_pr_reviews: "true"
           bot_name: "agent[bot]"
           model_cheap: "xai/grok-4-1-fast-non-reasoning"
-          model: "openai/GPT-5.3-Codex"
-          model_expensive: "openai/GPT-5.4"
+          model: "openai/gpt-5.3-codex"
+          model_expensive: "openai/gpt-5.4"
           xai_api_key: ${{ secrets.XAI_API_KEY }}
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
