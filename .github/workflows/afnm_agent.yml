@@ -46,10 +46,10 @@ jobs:
         with:
           github_token: ${{ steps.app-token.outputs.token }}
           trigger_phrase: "@agent"
-          assignee_trigger: "agent[bot]"
+          assignee_trigger: "afnm-agent[bot]"
           label_trigger: "agent"
           auto_fix_pr_reviews: "true"
-          bot_name: "agent[bot]"
+          bot_name: "afnm-agent[bot]"
           model_cheap: "minimax/MiniMax-M2.7"
           model: "minimax/MiniMax-M2.7"
           model_expensive: "minimax/MiniMax-M2.7"
