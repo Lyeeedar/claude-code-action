@@ -79,17 +79,17 @@ inputs:
   # Model configuration — use "provider/model-name" format.
   # Supported providers: openai, xai. Bare names default to openai.
   model:
-    description: "Medium/primary tier model spec (sonnet equivalent — used for almost all work). Format: 'provider/model-name' e.g. 'openai/GPT-5.3-Codex'."
+    description: "Medium/primary tier model spec (sonnet equivalent — used for almost all work). Format: 'provider/model-name' e.g. 'openai/gpt-5.3-codex'."
     required: false
-    default: "openai/GPT-5.3-Codex"
+    default: "openai/gpt-5.3-codex"
   model_cheap:
     description: "Small/fast tier model spec (haiku equivalent — lightweight internal tasks). Format: 'provider/model-name' e.g. 'xai/grok-4-1-fast-non-reasoning'. Defaults to 'model' if not set."
     required: false
     default: "xai/grok-4-1-fast-non-reasoning"
   model_expensive:
-    description: "Large/capable tier model spec (opus equivalent — complex reasoning, rarely selected). Format: 'provider/model-name' e.g. 'openai/GPT-5.4'. Defaults to 'model' if not set."
+    description: "Large/capable tier model spec (opus equivalent — complex reasoning, rarely selected). Format: 'provider/model-name' e.g. 'openai/gpt-5.4'. Defaults to 'model' if not set."
     required: false
-    default: "openai/GPT-5.4"
+    default: "openai/gpt-5.4"
 
   claude_args:
     description: "Additional arguments to pass directly to Claude CLI"
