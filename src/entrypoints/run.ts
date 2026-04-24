@@ -81,6 +81,34 @@ async function ensureUv(): Promise<void> {
 }
 
 /**
+ * After Claude runs, find any PR it created for the given branch and ensure
+ * the body contains "Fixes #<issueNumber>" so GitHub auto-closes the issue on merge.
+ */
+async function patchPRWithIssueLink(
+  octokit: Octokits,
+  owner: string,
+  repo: string,
+  branch: string,
+  issueNumber: number,
+): Promise<void> {
+  const { data: prs } = await octokit.rest.pulls.list({
+    owner,
+    repo,
+    head: `${owner}:${branch}`,
+    state: "open",
+  });
+  if (prs.length === 0) return;
+
+  const pr = prs[0];
+  const closingRe = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+/i;
+  if (pr.body && closingRe.test(pr.body)) return; // already has one
+
+  const newBody = (pr.body ?? "") + `\n\nFixes #${issueNumber}`;
+  await octokit.rest.pulls.update({ owner, repo, pull_number: pr.number, body: newBody });
+  console.log(`Added "Fixes #${issueNumber}" to PR #${pr.number}`);
+}
+
+/**
  * Install Claude Code CLI, handling retry logic and custom executable paths.
  * Returns the absolute path to the claude executable.
  */
@@ -377,6 +405,29 @@ async function run() {
         );
       } catch (err) {
         console.error(`Failed to save agent state: ${err}`);
+      }
+    }
+
+    // After Claude runs, if it created a PR for an issue, inject "Fixes #N" so
+    // GitHub auto-closes the issue on merge.
+    if (
+      modeName === "tag" &&
+      claudeBranch &&
+      octokit &&
+      isEntityContext(context) &&
+      !context.isPR &&
+      context.issue?.number
+    ) {
+      try {
+        await patchPRWithIssueLink(
+          octokit,
+          context.repository.owner,
+          context.repository.repo,
+          claudeBranch,
+          context.issue.number,
+        );
+      } catch (err) {
+        console.warn(`Could not patch PR with issue link: ${err}`);
       }
     }
 
