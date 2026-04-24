@@ -259,6 +259,7 @@ jobs:
           minimax_api_key: \${{ secrets.MINIMAX_API_KEY }}
           xai_api_key: \${{ secrets.XAI_API_KEY }}
           openai_api_key: \${{ secrets.OPENAI_API_KEY }}
+          show_full_output: "true"
 ${envLines ? `        env:\n${envLines}` : ""}
 `;
 }
