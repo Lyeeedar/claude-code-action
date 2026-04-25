@@ -107,14 +107,19 @@ export function checkContainsTrigger(context: ParsedGitHubContext): boolean {
 
     // Auto-trigger on non-approved reviews of bot-authored PRs (no @mention needed).
     // "changes_requested" and "commented" reviews both fire this; "approved" is skipped.
+    // Match by exact botName if provided, otherwise accept any [bot] login.
+    const prAuthor = reviewPayload.pull_request.user.login;
+    const isBot = context.inputs.botName
+      ? prAuthor === context.inputs.botName || prAuthor.endsWith("[bot]")
+      : prAuthor.endsWith("[bot]");
     if (
       context.inputs.autoFixPrReviews &&
       context.eventAction === "submitted" &&
       reviewState !== "approved" &&
-      reviewPayload.pull_request.user.login === context.inputs.botName
+      isBot
     ) {
       console.log(
-        `Review (${reviewState}) submitted on bot-authored PR by ${context.inputs.botName}, triggering fix cycle`,
+        `Review (${reviewState}) submitted on bot-authored PR (${prAuthor}), triggering fix cycle`,
       );
       return true;
     }
