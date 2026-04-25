@@ -67,9 +67,9 @@ export async function setupClaudeCodeSettings(
   settings.teammateMode = "in-process";
   console.log(`Set teammateMode: in-process`);
 
-  // On PR review events, inject a Stop hook that enforces Claude made edits before finishing.
-  // Checks both uncommitted changes (git status) and unpushed commits (git log @{u}..HEAD).
-  if (process.env.GITHUB_EVENT_NAME === "pull_request_review" || process.env.CLAUDE_AGENT_ON_PR === "true") {
+  // Enforce that Claude always makes changes — except in schedule mode where read-only runs are valid.
+  // Checks uncommitted changes, unpushed commits, and whether HEAD moved since the session started.
+  if (process.env.CLAUDE_MODE !== "schedule") {
     const command =
       `python3 -c "import subprocess,json,os\n` +
       `g=subprocess.run(['git','status','--porcelain'],capture_output=True,text=True)\n` +
@@ -78,14 +78,14 @@ export async function setupClaudeCodeSettings(
       `has_changes=bool(g.stdout.strip())\n` +
       `has_unpushed=p.returncode!=0 or bool(p.stdout.strip())\n` +
       `head_moved=h.returncode==0 and h.stdout.strip()!=os.environ.get('CLAUDE_INITIAL_HEAD','')\n` +
-      `if not has_changes and not has_unpushed and not head_moved: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'No edits made and nothing to push. A reviewer requested changes on this PR - go back and address the review comments before finishing.'}}))"`;
+      `if not has_changes and not has_unpushed and not head_moved: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'You have not made any code changes. Your job is to implement fixes and improvements, not just review or explain. Go back and make the actual changes required.'}}))"`;
     const stopHook = {
       hooks: [{ type: "command", command, statusMessage: "Checking for edits..." }],
     };
     const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
     hooks.Stop = [...(hooks.Stop ?? []), stopHook];
     settings.hooks = hooks;
-    console.log(`Injected Stop hook to enforce edits on pull_request_review`);
+    console.log(`Injected Stop hook to enforce edits (mode: ${process.env.CLAUDE_MODE})`);
   }
 
   // Write the code review subagent script. The Stop hook calls this to spin up

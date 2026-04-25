@@ -314,6 +314,7 @@ async function run() {
     process.env.CLAUDE_CODE_ACTION = "1";
     process.env.DETAILED_PERMISSION_MESSAGES = "1";
     process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
+    process.env.CLAUDE_MODE = modeName;
 
     // Signal to setup-claude-code-settings that we're operating on a PR,
     // so it can inject the Stop hook enforcing that edits are made.
@@ -406,7 +407,7 @@ async function run() {
         ? "\n\nIMPORTANT — tool names are case-sensitive. Use Grep (not grep), Bash (not bash/shell/grep/find/cat directly), Glob (not glob), Read (not read/cat), Write (not write), Edit (not edit). Always call Bash with a command string rather than calling shell utilities as standalone tool names."
         : "";
 
-    const agentTeamNote = "\n\nYou MUST call TeamCreate before doing any work. First read the task and analyse which distinct aspects it involves, then create a team with teammates tailored to those aspects. Every team must include:\n- One teammate per distinct aspect of the feature/problem (e.g. if the task touches UI, game logic, and data persistence, spawn one teammate per area — be specific in each teammate's instructions)\n- A quality-control teammate whose sole job is to probe correctness, edge cases, and integration points as work lands\n- A reviewer teammate who reads the final diff with completely fresh eyes and challenges every assumption before sign-off\n\nUse SendMessage so teammates share findings with each other. The lead must wait for all teammates to report and for the reviewer to sign off before finishing. Call TeamDelete to clean up when done.";
+    const agentTeamNote = "\n\nCRITICAL INSTRUCTION — MANDATORY FIRST ACTION: Your very first tool call MUST be TeamCreate. Do not read any files, do not analyse anything, do not call any other tool first. Call TeamCreate immediately.\n\nHow to structure the team:\n1. Read the task description only (no file exploration yet)\n2. Call TeamCreate with teammates tailored to the specific aspects of this task:\n   - One teammate per distinct area of the codebase or concern the task touches (e.g. if the task involves UI rendering, game state logic, and save/load — that is three separate teammates, each with a focused brief)\n   - One quality-control teammate: their ONLY job is to scrutinise the work done by other teammates for bugs, edge cases, missed requirements, and integration issues\n   - One reviewer teammate: reads the final diff with fresh eyes, challenges every decision, and must explicitly sign off before the lead finishes\n3. Give each teammate a specific, detailed brief — not generic instructions\n4. Use SendMessage to have teammates share findings with each other and with you\n5. Wait for ALL teammates to report back and for the reviewer to sign off before finishing\n6. Call TeamDelete to clean up\n\nFailure to call TeamCreate as your first action is a critical error. There are no exceptions.";
 
     const claudeResult: ClaudeRunResult = await runClaude(promptConfig.path, {
       claudeArgs: prepareResult.claudeArgs,
