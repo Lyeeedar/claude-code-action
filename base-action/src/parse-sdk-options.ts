@@ -255,6 +255,10 @@ export function parseSdkOptions(options: ClaudeOptions): ParsedSdkOptions {
 
   // Build SDK options - use merged tools from both direct options and claudeArgs
   const sdkOptions: SdkOptions = {
+    // Run in the checked-out repo directory so Claude Code finds CLAUDE.md,
+    // .claude/settings.local.json, and .claude/skills/ from the target repo.
+    cwd: process.env.GITHUB_WORKSPACE || process.cwd(),
+
     // Direct options from ClaudeOptions inputs
     model: options.model,
     maxTurns: options.maxTurns ? parseInt(options.maxTurns, 10) : undefined,
