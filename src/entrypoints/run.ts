@@ -320,6 +320,14 @@ async function run() {
       process.env.CLAUDE_AGENT_ON_PR = "true";
     }
 
+    // Expose entity number and branch for Stop hooks.
+    if (isEntityContext(context)) {
+      process.env.CLAUDE_ENTITY_NUMBER = String(context.entityNumber);
+    }
+    if (claudeBranch) {
+      process.env.CLAUDE_BRANCH = claudeBranch;
+    }
+
     // Expose the tracking comment ID so the Stop hook can check for unchecked items.
     if (commentId) {
       process.env.CLAUDE_TRACKING_COMMENT_ID = String(commentId);
