@@ -95,30 +95,30 @@ export async function setupClaudeCodeSettings(
   const reviewScript = `#!/usr/bin/env python3
 import subprocess, json, os, sys
 
-repo = os.environ.get('GITHUB_REPOSITORY', '')
-entity_num = os.environ.get('CLAUDE_ENTITY_NUMBER', '')
+try:
+    repo = os.environ.get('GITHUB_REPOSITORY', '')
+    entity_num = os.environ.get('CLAUDE_ENTITY_NUMBER', '')
+    if not repo or not entity_num:
+        sys.exit(0)
 
-if not repo or not entity_num:
-    sys.exit(0)
+    r = subprocess.run(['gh', 'api', f'/repos/{repo}/issues/{entity_num}'],
+        capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(0)
+    issue = json.loads(r.stdout)
 
-r = subprocess.run(['gh', 'api', f'/repos/{repo}/issues/{entity_num}'],
-    capture_output=True, text=True)
-if r.returncode != 0:
-    sys.exit(0)
-issue = json.loads(r.stdout)
+    cr = subprocess.run(['gh', 'api', f'/repos/{repo}/issues/{entity_num}/comments'],
+        capture_output=True, text=True)
+    comments = json.loads(cr.stdout) if cr.returncode == 0 else []
+    comment_thread = '\\n\\n'.join([
+        f"**@{c['user']['login']}**: {c['body']}" for c in comments[:20]
+    ]) or '(no comments)'
 
-cr = subprocess.run(['gh', 'api', f'/repos/{repo}/issues/{entity_num}/comments'],
-    capture_output=True, text=True)
-comments = json.loads(cr.stdout) if cr.returncode == 0 else []
-comment_thread = '\\n\\n'.join([
-    f"**@{c['user']['login']}**: {c['body']}" for c in comments[:20]
-]) or '(no comments)'
+    diff_result = subprocess.run(['git', 'diff', 'origin/main...HEAD'],
+        capture_output=True, text=True)
+    diff = diff_result.stdout[:80000] if diff_result.returncode == 0 else '(no diff available)'
 
-diff_result = subprocess.run(['git', 'diff', 'origin/main...HEAD'],
-    capture_output=True, text=True)
-diff = diff_result.stdout[:80000] if diff_result.returncode == 0 else '(no diff available)'
-
-prompt = f"""You are an extremely critical code reviewer. Your job is to verify whether a GitHub issue has been fully and correctly addressed.
+    prompt = f"""You are an extremely critical code reviewer. Your job is to verify whether a GitHub issue has been fully and correctly addressed.
 
 ## Issue #{entity_num}: {issue['title']}
 
@@ -151,31 +151,32 @@ End your response with exactly one of these lines (nothing after it):
 VERDICT: COMPLETE
 VERDICT: INCOMPLETE - <specific list of problems>"""
 
-result = subprocess.run(
-    ['claude', '-p', prompt, '--setting-sources', 'project'],
-    capture_output=True, text=True,
-    timeout=600,
-    env={**os.environ}
-)
+    result = subprocess.run(
+        ['claude', '-p', prompt, '--setting-sources', 'project'],
+        capture_output=True, text=True,
+        timeout=600,
+        env={**os.environ}
+    )
+    if result.returncode != 0:
+        sys.exit(0)
 
-if result.returncode != 0:
-    print(f"Review subagent failed: {result.stderr[:500]}", file=sys.stderr)
+    output = result.stdout
+    verdict_line = ''
+    for line in reversed(output.strip().split('\\n')):
+        line = line.strip()
+        if line.startswith('VERDICT:'):
+            verdict_line = line
+            break
+
+    if not verdict_line or 'INCOMPLETE' not in verdict_line:
+        sys.exit(0)
+
+    reason = verdict_line.split('INCOMPLETE -', 1)[-1].strip() if 'INCOMPLETE -' in verdict_line else 'See review output.'
+    block_reason = f"Code review subagent found the implementation incomplete.\\n\\n**Problems:**\\n{reason}\\n\\n**Full review:**\\n{output[-3000:]}"
+    print(json.dumps({'hookSpecificOutput': {'hookEventName': 'Stop', 'decision': 'block', 'reason': block_reason}}))
+except Exception as e:
+    print(f"Review hook error (non-fatal): {e}", file=sys.stderr)
     sys.exit(0)
-
-output = result.stdout
-verdict_line = ''
-for line in reversed(output.strip().split('\\n')):
-    line = line.strip()
-    if line.startswith('VERDICT:'):
-        verdict_line = line
-        break
-
-if not verdict_line or 'INCOMPLETE' not in verdict_line:
-    sys.exit(0)
-
-reason = verdict_line.split('INCOMPLETE -', 1)[-1].strip() if 'INCOMPLETE -' in verdict_line else 'See review output.'
-block_reason = f"Code review subagent found the implementation incomplete.\\n\\n**Problems:**\\n{reason}\\n\\n**Full review:**\\n{output[-3000:]}"
-print(json.dumps({'hookSpecificOutput': {'hookEventName': 'Stop', 'decision': 'block', 'reason': block_reason}}))
 `;
 
   const reviewScriptPath = "/tmp/claude-code-review.py";
