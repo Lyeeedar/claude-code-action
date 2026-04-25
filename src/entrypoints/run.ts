@@ -405,9 +405,11 @@ async function run() {
         ? "\n\nIMPORTANT — tool names are case-sensitive. Use Grep (not grep), Bash (not bash/shell/grep/find/cat directly), Glob (not glob), Read (not read/cat), Write (not write), Edit (not edit). Always call Bash with a command string rather than calling shell utilities as standalone tool names."
         : "";
 
+    const agentTeamNote = "\n\nYou MUST create an agent team before doing any work. Analyse the task first, then spawn a dynamic team tailored to its specific aspects. Every team must include:\n- One teammate per distinct aspect of the feature/problem (e.g. if the task touches UI, game logic, and data persistence, spawn one per area)\n- A quality-control teammate whose sole job is to verify correctness, edge cases, and integration points as work lands\n- A reviewer teammate who reads the final diff with fresh eyes and challenges every assumption\n\nTeammates must communicate findings to each other. The lead synthesises and only finishes when all teammates have reported and the reviewer has signed off. Do NOT begin implementation before the team is assembled.";
+
     const claudeResult: ClaudeRunResult = await runClaude(promptConfig.path, {
       claudeArgs: prepareResult.claudeArgs,
-      appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote || undefined,
+      appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote || undefined,
       model: process.env.ANTHROPIC_MODEL,
       pathToClaudeCodeExecutable: claudeExecutable,
       showFullOutput: process.env.INPUT_SHOW_FULL_OUTPUT,
