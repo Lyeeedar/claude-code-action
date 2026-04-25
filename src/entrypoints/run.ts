@@ -313,6 +313,17 @@ async function run() {
     process.env.CLAUDE_CODE_ACTION = "1";
     process.env.DETAILED_PERMISSION_MESSAGES = "1";
 
+    // Signal to setup-claude-code-settings that we're operating on a PR,
+    // so it can inject the Stop hook enforcing that edits are made.
+    if (isEntityContext(context) && context.isPR) {
+      process.env.CLAUDE_AGENT_ON_PR = "true";
+    }
+
+    // Expose the tracking comment ID so the Stop hook can check for unchecked items.
+    if (commentId) {
+      process.env.CLAUDE_TRACKING_COMMENT_ID = String(commentId);
+    }
+
     await setupModelProxy(
       process.env.MODEL_SMALL || process.env.MODEL_MEDIUM || "",
       process.env.MODEL_MEDIUM || "",
