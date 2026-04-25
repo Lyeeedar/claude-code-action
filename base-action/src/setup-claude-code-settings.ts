@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { homedir } from "os";
-import { readFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 
 export async function setupClaudeCodeSettings(
   settingsInput?: string,
@@ -83,6 +83,110 @@ export async function setupClaudeCodeSettings(
     settings.hooks = hooks;
     console.log(`Injected Stop hook to enforce edits on pull_request_review`);
   }
+
+  // Write the code review subagent script. The Stop hook calls this to spin up
+  // a full Claude Code session that explores the codebase and verifies the work
+  // is complete. Uses --setting-sources project to skip user settings and prevent
+  // recursive Stop hook triggering.
+  const reviewScript = `#!/usr/bin/env python3
+import subprocess, json, os, sys
+
+repo = os.environ.get('GITHUB_REPOSITORY', '')
+entity_num = os.environ.get('CLAUDE_ENTITY_NUMBER', '')
+
+if not repo or not entity_num:
+    sys.exit(0)
+
+r = subprocess.run(['gh', 'api', f'/repos/{repo}/issues/{entity_num}'],
+    capture_output=True, text=True)
+if r.returncode != 0:
+    sys.exit(0)
+issue = json.loads(r.stdout)
+
+cr = subprocess.run(['gh', 'api', f'/repos/{repo}/issues/{entity_num}/comments'],
+    capture_output=True, text=True)
+comments = json.loads(cr.stdout) if cr.returncode == 0 else []
+comment_thread = '\\n\\n'.join([
+    f"**@{c['user']['login']}**: {c['body']}" for c in comments[:20]
+]) or '(no comments)'
+
+diff_result = subprocess.run(['git', 'diff', 'origin/main...HEAD'],
+    capture_output=True, text=True)
+diff = diff_result.stdout[:80000] if diff_result.returncode == 0 else '(no diff available)'
+
+prompt = f"""You are an extremely critical code reviewer. Your job is to verify whether a GitHub issue has been fully and correctly addressed.
+
+## Issue #{entity_num}: {issue['title']}
+
+{issue['body']}
+
+## Discussion Thread
+
+{comment_thread}
+
+## Changes Made (diff vs main)
+
+\`\`\`diff
+{diff}
+\`\`\`
+
+## Your Task
+
+Explore the codebase thoroughly using Read, Grep, and Glob. Do NOT rely solely on the diff - look at the actual files in context to understand what was changed and whether it is correct.
+
+Be **extremely critical**. Check:
+1. Every requirement stated in the issue is fully addressed
+2. The implementation has no logic errors or missed edge cases
+3. The code integrates correctly with surrounding systems
+4. Nothing is half-done, stubbed out, or left as a placeholder
+5. Any files mentioned in the issue or discussion were actually modified
+
+If anything is missing, wrong, or incomplete, say so explicitly.
+
+End your response with exactly one of these lines (nothing after it):
+VERDICT: COMPLETE
+VERDICT: INCOMPLETE - <specific list of problems>"""
+
+result = subprocess.run(
+    ['claude', '-p', prompt, '--setting-sources', 'project'],
+    capture_output=True, text=True,
+    timeout=600,
+    env={**os.environ}
+)
+
+if result.returncode != 0:
+    print(f"Review subagent failed: {result.stderr[:500]}", file=sys.stderr)
+    sys.exit(0)
+
+output = result.stdout
+verdict_line = ''
+for line in reversed(output.strip().split('\\n')):
+    line = line.strip()
+    if line.startswith('VERDICT:'):
+        verdict_line = line
+        break
+
+if not verdict_line or 'INCOMPLETE' not in verdict_line:
+    sys.exit(0)
+
+reason = verdict_line.split('INCOMPLETE -', 1)[-1].strip() if 'INCOMPLETE -' in verdict_line else 'See review output.'
+block_reason = f"Code review subagent found the implementation incomplete.\\n\\n**Problems:**\\n{reason}\\n\\n**Full review:**\\n{output[-3000:]}"
+print(json.dumps({'hookSpecificOutput': {'hookEventName': 'Stop', 'decision': 'block', 'reason': block_reason}}))
+`;
+
+  const reviewScriptPath = "/tmp/claude-code-review.py";
+  await writeFile(reviewScriptPath, reviewScript, "utf-8");
+  console.log(`Wrote code review script to ${reviewScriptPath}`);
+
+  const reviewStopHook = {
+    hooks: [{ type: "command", command: `python3 ${reviewScriptPath}`, statusMessage: "Running code review subagent..." }],
+  };
+  {
+    const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
+    hooks.Stop = [...(hooks.Stop ?? []), reviewStopHook];
+    settings.hooks = hooks;
+  }
+  console.log(`Injected Stop hook for code review subagent`);
 
   // Inject a Stop hook that checks the tracking comment for unchecked checkboxes.
   // If any remain, Claude must either complete the work or update the checkboxes.
