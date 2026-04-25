@@ -408,6 +408,38 @@ async function run() {
     claudeSuccess = claudeResult.conclusion === "success";
     executionFile = claudeResult.executionFile;
 
+    // Stage, commit, and push any work Claude left behind.
+    // Runs unconditionally so work is never silently lost or left unpushed.
+    if (claudeBranch) {
+      try {
+        const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
+
+        // Stage everything and commit if there are changes.
+        const status = execSync("git status --porcelain", { cwd: workspace, encoding: "utf-8" }).trim();
+        if (status) {
+          console.log("Staging and committing uncommitted changes left by Claude...");
+          execSync("git add -A", { cwd: workspace, stdio: "inherit" });
+          execSync(
+            `git commit -m "chore: apply remaining changes from Claude session"`,
+            { cwd: workspace, stdio: "inherit" },
+          );
+        }
+
+        // Push any commits not yet on remote.
+        const unpushed = execSync(
+          "git log @{u}..HEAD --oneline 2>/dev/null || true",
+          { cwd: workspace, encoding: "utf-8" },
+        ).trim();
+        if (unpushed) {
+          console.log(`Pushing ${unpushed.split("\n").length} unpushed commit(s) on ${claudeBranch}...`);
+          execSync(`git push origin ${claudeBranch}`, { cwd: workspace, stdio: "inherit" });
+          console.log("Push successful");
+        }
+      } catch (err) {
+        console.warn(`Post-run commit/push failed (non-fatal): ${err}`);
+      }
+    }
+
     // Run post-steps for schedule mode (always, regardless of Claude's conclusion)
     if (
       modeName === "schedule" &&
