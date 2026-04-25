@@ -313,6 +313,7 @@ async function run() {
     process.env.INPUT_ACTION_INPUTS_PRESENT = actionInputsPresent;
     process.env.CLAUDE_CODE_ACTION = "1";
     process.env.DETAILED_PERMISSION_MESSAGES = "1";
+    process.env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1";
 
     // Signal to setup-claude-code-settings that we're operating on a PR,
     // so it can inject the Stop hook enforcing that edits are made.
@@ -405,7 +406,7 @@ async function run() {
         ? "\n\nIMPORTANT — tool names are case-sensitive. Use Grep (not grep), Bash (not bash/shell/grep/find/cat directly), Glob (not glob), Read (not read/cat), Write (not write), Edit (not edit). Always call Bash with a command string rather than calling shell utilities as standalone tool names."
         : "";
 
-    const agentTeamNote = "\n\nYou MUST create an agent team before doing any work. Analyse the task first, then spawn a dynamic team tailored to its specific aspects. Every team must include:\n- One teammate per distinct aspect of the feature/problem (e.g. if the task touches UI, game logic, and data persistence, spawn one per area)\n- A quality-control teammate whose sole job is to verify correctness, edge cases, and integration points as work lands\n- A reviewer teammate who reads the final diff with fresh eyes and challenges every assumption\n\nTeammates must communicate findings to each other. The lead synthesises and only finishes when all teammates have reported and the reviewer has signed off. Do NOT begin implementation before the team is assembled.";
+    const agentTeamNote = "\n\nYou MUST call TeamCreate before doing any work. First read the task and analyse which distinct aspects it involves, then create a team with teammates tailored to those aspects. Every team must include:\n- One teammate per distinct aspect of the feature/problem (e.g. if the task touches UI, game logic, and data persistence, spawn one teammate per area — be specific in each teammate's instructions)\n- A quality-control teammate whose sole job is to probe correctness, edge cases, and integration points as work lands\n- A reviewer teammate who reads the final diff with completely fresh eyes and challenges every assumption before sign-off\n\nUse SendMessage so teammates share findings with each other. The lead must wait for all teammates to report and for the reviewer to sign off before finishing. Call TeamDelete to clean up when done.";
 
     const claudeResult: ClaudeRunResult = await runClaude(promptConfig.path, {
       claudeArgs: prepareResult.claudeArgs,
