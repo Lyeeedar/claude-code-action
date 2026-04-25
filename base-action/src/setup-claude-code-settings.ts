@@ -63,13 +63,9 @@ export async function setupClaudeCodeSettings(
   settings.enableAllProjectMcpServers = true;
   console.log(`Updated settings with enableAllProjectMcpServers: true`);
 
-  // Enable agent teams and force in-process mode (no tmux in CI).
-  settings.env = {
-    ...((settings.env as Record<string, string>) ?? {}),
-    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
-  };
+  // Force in-process teammate mode — no tmux available in CI.
   settings.teammateMode = "in-process";
-  console.log(`Enabled agent teams (in-process mode)`);
+  console.log(`Set teammateMode: in-process`);
 
   // On PR review events, inject a Stop hook that enforces Claude made edits before finishing.
   // Checks both uncommitted changes (git status) and unpushed commits (git log @{u}..HEAD).
