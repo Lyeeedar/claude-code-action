@@ -67,12 +67,14 @@ export async function setupClaudeCodeSettings(
   // Checks both uncommitted changes (git status) and unpushed commits (git log @{u}..HEAD).
   if (process.env.GITHUB_EVENT_NAME === "pull_request_review" || process.env.CLAUDE_AGENT_ON_PR === "true") {
     const command =
-      `python3 -c "import subprocess,json\n` +
+      `python3 -c "import subprocess,json,os\n` +
       `g=subprocess.run(['git','status','--porcelain'],capture_output=True,text=True)\n` +
       `p=subprocess.run(['git','log','@{u}..HEAD','--oneline'],capture_output=True,text=True)\n` +
+      `h=subprocess.run(['git','rev-parse','HEAD'],capture_output=True,text=True)\n` +
       `has_changes=bool(g.stdout.strip())\n` +
       `has_unpushed=p.returncode!=0 or bool(p.stdout.strip())\n` +
-      `if not has_changes and not has_unpushed: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'No edits made and nothing to push. A reviewer requested changes on this PR - go back and address the review comments before finishing.'}}))"`;
+      `head_moved=h.returncode==0 and h.stdout.strip()!=os.environ.get('CLAUDE_INITIAL_HEAD','')\n` +
+      `if not has_changes and not has_unpushed and not head_moved: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'No edits made and nothing to push. A reviewer requested changes on this PR - go back and address the review comments before finishing.'}}))"`;
     const stopHook = {
       hooks: [{ type: "command", command, statusMessage: "Checking for edits..." }],
     };

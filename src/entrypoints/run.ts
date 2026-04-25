@@ -11,6 +11,7 @@ import { dirname } from "path";
 import { spawn } from "child_process";
 import { appendFile } from "fs/promises";
 import { existsSync, readFileSync } from "fs";
+import { execSync } from "child_process";
 import { setupGitHubToken, WorkflowValidationSkipError } from "../github/token";
 import { checkWritePermissions } from "../github/validation/permissions";
 import { createOctokit } from "../github/api/client";
@@ -322,6 +323,17 @@ async function run() {
     // Expose the tracking comment ID so the Stop hook can check for unchecked items.
     if (commentId) {
       process.env.CLAUDE_TRACKING_COMMENT_ID = String(commentId);
+    }
+
+    // Snapshot HEAD before Claude runs so the Stop hook can detect pushed commits.
+    try {
+      const initialHead = execSync("git rev-parse HEAD", {
+        cwd: process.env.GITHUB_WORKSPACE || process.cwd(),
+        encoding: "utf-8",
+      }).trim();
+      process.env.CLAUDE_INITIAL_HEAD = initialHead;
+    } catch {
+      // Not a git repo or git unavailable — hook will skip the check.
     }
 
     await setupModelProxy(
