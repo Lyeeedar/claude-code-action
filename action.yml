@@ -85,24 +85,28 @@ inputs:
     description: "MiniMax API key — required when any model spec uses the 'minimax/' prefix (e.g. the medium and large tiers)."
     required: false
     default: ""
+  kimi_api_key:
+    description: "Kimi (Moonshot AI) API key — required when any model spec uses the 'kimi/' prefix."
+    required: false
+    default: ""
   github_token:
     description: "GitHub token with repo and pull request permissions (optional if using GitHub App)"
     required: false
 
   # Model configuration — use "provider/model-name" format.
-  # Supported providers: openai, xai, minimax. Bare names default to openai.
+  # Supported providers: openai, xai, minimax, kimi. Bare names default to openai.
   model:
-    description: "Medium/primary tier model spec (sonnet equivalent — used for almost all work). Format: 'provider/model-name' e.g. 'minimax/MiniMax-M2.7'."
+    description: "Medium/primary tier model spec (sonnet equivalent — used for almost all work). Format: 'provider/model-name' e.g. 'kimi/kimi-k2'."
     required: false
-    default: "minimax/MiniMax-M2.7"
+    default: ""
   model_cheap:
     description: "Small/fast tier model spec (haiku equivalent — lightweight internal tasks). Format: 'provider/model-name'. Defaults to 'model' if not set."
     required: false
-    default: "minimax/MiniMax-M2.7"
+    default: ""
   model_expensive:
-    description: "Large/capable tier model spec (opus equivalent — complex reasoning, rarely selected). Format: 'provider/model-name' e.g. 'minimax/MiniMax-M2.7'. Defaults to 'model' if not set."
+    description: "Large/capable tier model spec (opus equivalent — complex reasoning, rarely selected). Format: 'provider/model-name'. Defaults to 'model' if not set."
     required: false
-    default: "minimax/MiniMax-M2.7"
+    default: ""
 
   claude_args:
     description: "Additional arguments to pass directly to Claude CLI"
@@ -321,6 +325,7 @@ runs:
         XAI_API_KEY: ${{ inputs.xai_api_key }}
         OPENAI_API_KEY: ${{ inputs.openai_api_key }}
         MINIMAX_API_KEY: ${{ inputs.minimax_api_key }}
+        KIMI_API_KEY: ${{ inputs.kimi_api_key }}
 
         # MCP configuration — these env vars are read directly from process.env by the
         # Claude CLI subprocess. They must be listed explicitly here because this step's

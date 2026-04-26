@@ -376,6 +376,7 @@ async function run() {
       process.env.XAI_API_KEY || "",
       process.env.OPENAI_API_KEY || "",
       process.env.MINIMAX_API_KEY || "",
+      process.env.KIMI_API_KEY || "",
     );
 
     validateEnvironmentVariables();
