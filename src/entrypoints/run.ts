@@ -177,6 +177,29 @@ async function installClaudeCode(): Promise<string> {
 }
 
 /**
+ * Extract the last assistant text response from the execution output file.
+ */
+function extractLastAssistantText(executionFile: string): string | undefined {
+  try {
+    const data: Turn[] = JSON.parse(readFileSync(executionFile, "utf-8"));
+    for (let i = data.length - 1; i >= 0; i--) {
+      const turn = data[i];
+      if (turn.type === "assistant" && turn.message?.content) {
+        const text = turn.message.content
+          .filter((c) => c.type === "text" && c.text)
+          .map((c) => c.text!)
+          .join("\n")
+          .trim();
+        if (text) return text;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return undefined;
+}
+
+/**
  * Write the step summary from Claude's execution output file.
  */
 async function writeStepSummary(executionFile: string): Promise<void> {
@@ -546,6 +569,23 @@ async function run() {
         });
       } catch (error) {
         console.error("Error updating comment with job link:", error);
+        // Fallback: post the last assistant response directly into the comment
+        if (executionFile && existsSync(executionFile)) {
+          const lastResponse = extractLastAssistantText(executionFile);
+          if (lastResponse) {
+            try {
+              await octokit.rest.issues.updateComment({
+                owner: context.repository.owner,
+                repo: context.repository.repo,
+                comment_id: commentId,
+                body: lastResponse,
+              });
+              console.log("Posted last assistant response as comment fallback");
+            } catch (fallbackError) {
+              console.error("Fallback comment update also failed:", fallbackError);
+            }
+          }
+        }
       }
     }
 
