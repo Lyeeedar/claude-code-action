@@ -5,7 +5,7 @@ import { join } from "path";
 
 const PROXY_PORT = 4001;
 const MINIMAX_ANTHROPIC_BASE_URL = "https://api.minimax.io/anthropic";
-const KIMI_API_BASE = "https://api.moonshot.cn/v1";
+const KIMI_ANTHROPIC_BASE_URL = "https://api.moonshot.ai/anthropic";
 const SUPPORTED_PROVIDERS = ["openai", "xai", "minimax", "kimi"] as const;
 type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 
@@ -13,7 +13,6 @@ interface ParsedModel {
   provider: SupportedProvider;
   modelName: string;
   litellmTarget: string;
-  apiBase?: string;
 }
 
 /**
@@ -30,14 +29,6 @@ function parseModelSpec(spec: string): ParsedModel {
     const prefix = spec.slice(0, slashIdx).toLowerCase();
     if ((SUPPORTED_PROVIDERS as readonly string[]).includes(prefix)) {
       const modelName = spec.slice(slashIdx + 1);
-      if (prefix === "kimi") {
-        return {
-          provider: "kimi",
-          modelName,
-          litellmTarget: `openai/${modelName}`,
-          apiBase: KIMI_API_BASE,
-        };
-      }
       return {
         provider: prefix as SupportedProvider,
         modelName,
@@ -76,7 +67,6 @@ function buildLiteLLMConfig(models: ParsedModel[]): string {
       `      model: "${litellmTarget}"`,
       `      api_key: os.environ/${apiKeyEnvName(provider)}`,
     );
-    if (apiBase) lines.push(`      api_base: "${apiBase}"`);
   }
   return lines.join("\n") + "\n";
 }
@@ -163,13 +153,8 @@ export async function setupModelProxy(
   if (minimaxApiKey) process.env.MINIMAX_API_KEY = minimaxApiKey;
   if (kimiApiKey) process.env.KIMI_API_KEY = kimiApiKey;
 
-  // If all tiers use MiniMax, skip LiteLLM and point directly at MiniMax's
-  // native Anthropic-compatible endpoint. This avoids parameter translation
-  // issues that occur when LiteLLM proxies Anthropic-format requests to MiniMax.
-  const allMinimax =
-    small.provider === "minimax" &&
-    medium.provider === "minimax" &&
-    large.provider === "minimax";
+  const allMinimax = [small, medium, large].every(m => m.provider === "minimax");
+  const allKimi = [small, medium, large].every(m => m.provider === "kimi");
 
   if (allMinimax) {
     if (!minimaxApiKey)
@@ -185,6 +170,21 @@ export async function setupModelProxy(
     process.env.ANTHROPIC_BASE_URL = MINIMAX_ANTHROPIC_BASE_URL;
     process.env.ANTHROPIC_API_KEY = minimaxApiKey;
     process.env.ANTHROPIC_AUTH_TOKEN = "";
+  } else if (allKimi) {
+    if (!kimiApiKey)
+      throw new Error("'kimi_api_key' is required when using Kimi models");
+
+    console.log(
+      `Using Kimi direct endpoint (no proxy):\n` +
+        `  haiku  → ${small.modelName}\n` +
+        `  sonnet → ${medium.modelName}  ← default\n` +
+        `  opus   → ${large.modelName}`,
+    );
+
+    process.env.ANTHROPIC_BASE_URL = KIMI_ANTHROPIC_BASE_URL;
+    process.env.ANTHROPIC_API_KEY = kimiApiKey;
+    process.env.ANTHROPIC_AUTH_TOKEN = "";
+    process.env.ENABLE_TOOL_SEARCH = "false";
   } else {
     installLiteLLM();
 
@@ -201,7 +201,11 @@ export async function setupModelProxy(
     const child = spawn(
       "litellm",
       ["--config", configPath, "--port", String(PROXY_PORT)],
-      { env: process.env, stdio: "inherit", detached: false },
+      {
+        env: { ...process.env, LITELLM_USE_RESPONSES_API: "false" },
+        stdio: "inherit",
+        detached: false,
+      },
     );
 
     await waitForProxy(PROXY_PORT, child);
