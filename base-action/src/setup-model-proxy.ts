@@ -61,7 +61,11 @@ function apiKeyEnvName(provider: SupportedProvider): string {
 }
 
 function buildLiteLLMConfig(models: ParsedModel[]): string {
-  const lines = ["model_list:"];
+  const lines = [
+    "litellm_settings:",
+    "  use_responses_api: false",
+    "model_list:",
+  ];
   const seen = new Set<string>();
   for (const { modelName, litellmTarget, provider, apiBase } of models) {
     if (seen.has(modelName)) continue;
