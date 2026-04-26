@@ -5,13 +5,15 @@ import { join } from "path";
 
 const PROXY_PORT = 4001;
 const MINIMAX_ANTHROPIC_BASE_URL = "https://api.minimax.io/anthropic";
-const SUPPORTED_PROVIDERS = ["openai", "xai", "minimax"] as const;
+const KIMI_API_BASE = "https://api.moonshot.cn/v1";
+const SUPPORTED_PROVIDERS = ["openai", "xai", "minimax", "kimi"] as const;
 type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
 
 interface ParsedModel {
   provider: SupportedProvider;
   modelName: string;
   litellmTarget: string;
+  apiBase?: string;
 }
 
 /**
@@ -28,6 +30,14 @@ function parseModelSpec(spec: string): ParsedModel {
     const prefix = spec.slice(0, slashIdx).toLowerCase();
     if ((SUPPORTED_PROVIDERS as readonly string[]).includes(prefix)) {
       const modelName = spec.slice(slashIdx + 1);
+      if (prefix === "kimi") {
+        return {
+          provider: "kimi",
+          modelName,
+          litellmTarget: `openai/${modelName}`,
+          apiBase: KIMI_API_BASE,
+        };
+      }
       return {
         provider: prefix as SupportedProvider,
         modelName,
@@ -46,13 +56,14 @@ function parseModelSpec(spec: string): ParsedModel {
 function apiKeyEnvName(provider: SupportedProvider): string {
   if (provider === "xai") return "XAI_API_KEY";
   if (provider === "minimax") return "MINIMAX_API_KEY";
+  if (provider === "kimi") return "KIMI_API_KEY";
   return "OPENAI_API_KEY";
 }
 
 function buildLiteLLMConfig(models: ParsedModel[]): string {
   const lines = ["model_list:"];
   const seen = new Set<string>();
-  for (const { modelName, litellmTarget, provider } of models) {
+  for (const { modelName, litellmTarget, provider, apiBase } of models) {
     if (seen.has(modelName)) continue;
     seen.add(modelName);
     lines.push(
@@ -61,6 +72,7 @@ function buildLiteLLMConfig(models: ParsedModel[]): string {
       `      model: "${litellmTarget}"`,
       `      api_key: os.environ/${apiKeyEnvName(provider)}`,
     );
+    if (apiBase) lines.push(`      api_base: "${apiBase}"`);
   }
   return lines.join("\n") + "\n";
 }
@@ -130,11 +142,12 @@ export async function setupModelProxy(
   xaiApiKey: string,
   openaiApiKey: string,
   minimaxApiKey: string,
+  kimiApiKey: string,
 ): Promise<void> {
   if (!mediumSpec) throw new Error("'model' (medium tier) is required");
-  if (!xaiApiKey && !openaiApiKey && !minimaxApiKey)
+  if (!xaiApiKey && !openaiApiKey && !minimaxApiKey && !kimiApiKey)
     throw new Error(
-      "At least one of 'xai_api_key', 'openai_api_key', or 'minimax_api_key' must be provided",
+      "At least one of 'xai_api_key', 'openai_api_key', 'minimax_api_key', or 'kimi_api_key' must be provided",
     );
 
   const small = parseModelSpec(smallSpec || mediumSpec);
@@ -144,6 +157,7 @@ export async function setupModelProxy(
   if (xaiApiKey) process.env.XAI_API_KEY = xaiApiKey;
   if (openaiApiKey) process.env.OPENAI_API_KEY = openaiApiKey;
   if (minimaxApiKey) process.env.MINIMAX_API_KEY = minimaxApiKey;
+  if (kimiApiKey) process.env.KIMI_API_KEY = kimiApiKey;
 
   // If all tiers use MiniMax, skip LiteLLM and point directly at MiniMax's
   // native Anthropic-compatible endpoint. This avoids parameter translation
