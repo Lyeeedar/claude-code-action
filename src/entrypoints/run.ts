@@ -81,6 +81,45 @@ async function ensureUv(): Promise<void> {
   console.log("uv installed successfully");
 }
 
+const WIP_MARKER = "<!-- claude-wip-section -->";
+
+/**
+ * Add [WIP] to the PR title and an "In Progress" badge with a job link to the
+ * PR body.  Safe to call multiple times — idempotent on both title and body.
+ */
+async function markPRAsInProgress(
+  octokit: Octokits,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<void> {
+  const runId = process.env.GITHUB_RUN_ID;
+  const jobUrl = runId
+    ? `https://github.com/${owner}/${repo}/actions/runs/${runId}`
+    : undefined;
+
+  const { data: pr } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
+
+  // Prepend [WIP] to the title if not already there
+  const newTitle = pr.title.startsWith("[WIP]") ? pr.title : `[WIP] ${pr.title}`;
+
+  // Build the in-progress line
+  const wipLine = jobUrl
+    ? `${WIP_MARKER}\n\n---\n⚙️ **In Progress** — [View job run](${jobUrl})`
+    : `${WIP_MARKER}\n\n---\n⚙️ **In Progress**`;
+
+  // Replace existing WIP section (everything from the marker to the end) or append
+  const existingBody = pr.body ?? "";
+  const newBody = existingBody.includes(WIP_MARKER)
+    ? existingBody.slice(0, existingBody.indexOf(WIP_MARKER)).trimEnd() + "\n\n" + wipLine
+    : `${existingBody}\n\n${wipLine}`;
+
+  if (newTitle === pr.title && newBody === existingBody) return; // nothing to do
+
+  await octokit.rest.pulls.update({ owner, repo, pull_number: prNumber, title: newTitle, body: newBody });
+  console.log(`Marked PR #${prNumber} as in-progress (title: "${newTitle}")`);
+}
+
 /**
  * After Claude runs, find any PR it created for the given branch and ensure
  * the body contains "Fixes #<issueNumber>" so GitHub auto-closes the issue on merge.
@@ -323,6 +362,21 @@ async function run() {
     draftPrUrl = "draftPrUrl" in prepareResult ? prepareResult.draftPrUrl : undefined;
     prepareCompleted = true;
 
+    // Mark an existing PR as in-progress immediately so the WIP label is
+    // visible before Claude starts working (and before any install time).
+    if (isEntityContext(context) && context.isPR && octokit) {
+      try {
+        await markPRAsInProgress(
+          octokit,
+          context.repository.owner,
+          context.repository.repo,
+          context.entityNumber,
+        );
+      } catch (err) {
+        console.warn(`Could not mark PR as in-progress: ${err}`);
+      }
+    }
+
     // Phase 2: Install toolchain dependencies
     if (process.env.MINIMAX_API_KEY) {
       await ensureUv();
@@ -499,10 +553,10 @@ async function run() {
       }
     }
 
-    // After Claude runs, if it created a PR for an issue, inject "Fixes #N" so
-    // GitHub auto-closes the issue on merge.
+    // After Claude runs, if it created a PR for an issue:
+    //   - inject "Fixes #N" (tag mode only) so GitHub auto-closes the issue on merge
+    //   - mark the new PR as in-progress
     if (
-      modeName === "tag" &&
       claudeBranch &&
       octokit &&
       isEntityContext(context) &&
@@ -510,15 +564,43 @@ async function run() {
       context.entityNumber
     ) {
       try {
-        await patchPRWithIssueLink(
-          octokit,
-          context.repository.owner,
-          context.repository.repo,
-          claudeBranch,
-          context.entityNumber,
-        );
+        const { data: newPrs } = await octokit.rest.pulls.list({
+          owner: context.repository.owner,
+          repo: context.repository.repo,
+          head: `${context.repository.owner}:${claudeBranch}`,
+          state: "open",
+        });
+
+        if (newPrs.length > 0) {
+          const newPr = newPrs[0];
+
+          if (modeName === "tag") {
+            try {
+              await patchPRWithIssueLink(
+                octokit,
+                context.repository.owner,
+                context.repository.repo,
+                claudeBranch,
+                context.entityNumber,
+              );
+            } catch (err) {
+              console.warn(`Could not patch PR with issue link: ${err}`);
+            }
+          }
+
+          try {
+            await markPRAsInProgress(
+              octokit,
+              context.repository.owner,
+              context.repository.repo,
+              newPr.number,
+            );
+          } catch (err) {
+            console.warn(`Could not mark new PR as in-progress: ${err}`);
+          }
+        }
       } catch (err) {
-        console.warn(`Could not patch PR with issue link: ${err}`);
+        console.warn(`Could not check for new PRs: ${err}`);
       }
     }
 
