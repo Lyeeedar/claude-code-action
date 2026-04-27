@@ -182,8 +182,8 @@ export async function setupModelProxy(
     );
 
     process.env.ANTHROPIC_BASE_URL = KIMI_ANTHROPIC_BASE_URL;
-    process.env.ANTHROPIC_API_KEY = kimiApiKey;
-    process.env.ANTHROPIC_AUTH_TOKEN = "";
+    process.env.ANTHROPIC_AUTH_TOKEN = kimiApiKey;
+    process.env.ANTHROPIC_API_KEY = "";
     process.env.ENABLE_TOOL_SEARCH = "false";
   } else {
     installLiteLLM();
