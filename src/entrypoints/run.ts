@@ -523,6 +523,7 @@ async function run() {
     // Restore prior conversation so the agent has full context for follow-up requests.
     // Not used for schedule mode (each run is independent).
     let priorSessionId: string | undefined;
+    console.log(`[session] Checking restore: mode=${modeName} isEntityContext=${isEntityContext(context)} isPR=${isEntityContext(context) ? context.isPR : "n/a"} entityNumber=${isEntityContext(context) ? context.entityNumber : "n/a"}`);
     if (modeName !== "schedule" && isEntityContext(context)) {
       const entityType = context.isPR ? "pr" : "issue";
       const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
