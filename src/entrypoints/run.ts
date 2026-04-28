@@ -30,6 +30,7 @@ import { prepareAgentMode } from "../modes/agent";
 import { prepareScheduleMode, runPostSteps, saveAgentState } from "../modes/schedule";
 import { checkContainsTrigger } from "../github/validation/trigger";
 import { restoreConfigFromBase } from "../github/operations/restore-config";
+import { loadSessionState, saveSessionState } from "../github/operations/session-state";
 import { validateBranchName } from "../github/operations/branch";
 import { collectActionInputsPresence } from "./collect-inputs";
 import { updateCommentLink } from "./update-comment-link";
@@ -487,9 +488,25 @@ async function run() {
 
     const agentTeamNote = "\n\nCRITICAL INSTRUCTION — MANDATORY FIRST ACTION: Your very first tool call MUST be TeamCreate. Do not read any files, do not analyse anything, do not call any other tool first. Call TeamCreate immediately.\n\nHow to structure the team:\n1. Read the task description only (no file exploration yet)\n2. Call TeamCreate with teammates tailored to the specific aspects of this task:\n   - One teammate per distinct area of the codebase or concern the task touches (e.g. if the task involves UI rendering, game state logic, and save/load — that is three separate teammates, each with a focused brief)\n   - One quality-control teammate: their ONLY job is to scrutinise the work done by other teammates for bugs, edge cases, missed requirements, and integration issues\n   - One reviewer teammate: reads the final diff with fresh eyes, challenges every decision, and must explicitly sign off before the lead finishes\n3. Give each teammate a specific, detailed brief — not generic instructions\n4. Use SendMessage to have teammates share findings with each other and with you\n5. Wait for ALL teammates to report back and for the reviewer to sign off before finishing\n6. Call TeamDelete to clean up — do NOT wait for teammate shutdown confirmation, just call TeamDelete and immediately proceed to finish. Do not block on teammate shutdown.\n\nFailure to call TeamCreate as your first action is a critical error. There are no exceptions.";
 
+    // Restore prior conversation so the agent has full context for follow-up requests.
+    // Not used for schedule mode (each run is independent).
+    let priorSessionId: string | undefined;
+    if (modeName !== "schedule" && isEntityContext(context)) {
+      const entityType = context.isPR ? "pr" : "issue";
+      const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
+      try {
+        priorSessionId = await loadSessionState(workspace, entityType, context.entityNumber);
+      } catch (err) {
+        console.warn(`Could not restore session state (starting fresh): ${err}`);
+      }
+    }
+
+    const claudeArgsWithResume = priorSessionId
+      ? `${prepareResult.claudeArgs || ""} --resume ${priorSessionId}`.trim()
+      : prepareResult.claudeArgs;
 
     const claudeResult: ClaudeRunResult = await runClaude(promptConfig.path, {
-      claudeArgs: prepareResult.claudeArgs,
+      claudeArgs: claudeArgsWithResume,
       appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote || undefined,
       model: process.env.ANTHROPIC_MODEL,
       pathToClaudeCodeExecutable: claudeExecutable,
@@ -498,6 +515,17 @@ async function run() {
 
     claudeSuccess = claudeResult.conclusion === "success";
     executionFile = claudeResult.executionFile;
+
+    // Persist session so follow-up triggers can resume the same conversation.
+    if (modeName !== "schedule" && isEntityContext(context) && claudeResult.sessionId) {
+      const entityType = context.isPR ? "pr" : "issue";
+      const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
+      try {
+        await saveSessionState(workspace, entityType, context.entityNumber, claudeResult.sessionId);
+      } catch (err) {
+        console.warn(`Could not save session state: ${err}`);
+      }
+    }
 
     // Stage, commit, and push any work Claude left behind.
     // Runs unconditionally so work is never silently lost or left unpushed.
