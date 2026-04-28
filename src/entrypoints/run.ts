@@ -352,6 +352,20 @@ async function run() {
     process.env.GITHUB_TOKEN = githubToken;
     process.env.GH_TOKEN = githubToken;
 
+    // Reconfigure git to use our app token (which has workflows: write).
+    // actions/checkout may otherwise leave the workflow token active.
+    try {
+      const b64 = Buffer.from(`x-access-token:${githubToken}`).toString(
+        "base64",
+      );
+      execSync(
+        `git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic ${b64}"`,
+        { stdio: "ignore" },
+      );
+    } catch {
+      // Non-fatal — git push may still work with the original credential.
+    }
+
     // Check write permissions for entity contexts, and for workflow_run
     // events, whose upstream run may have been started by an actor without
     // write access (e.g. the author of a fork pull request)
