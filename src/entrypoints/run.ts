@@ -132,6 +132,35 @@ async function markPRAsInProgress(
 }
 
 /**
+ * Remove [WIP] from the PR title and strip the in-progress section from the body.
+ * Always called when the agent finishes (success or failure).
+ */
+async function clearPRWIPStatus(
+  octokit: Octokits,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<void> {
+  const { data: pr } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
+
+  const newTitle = pr.title.startsWith("[WIP] ")
+    ? pr.title.slice("[WIP] ".length)
+    : pr.title.startsWith("[WIP]")
+    ? pr.title.slice("[WIP]".length).trimStart()
+    : pr.title;
+
+  const existingBody = pr.body ?? "";
+  const newBody = existingBody.includes(WIP_MARKER)
+    ? existingBody.slice(0, existingBody.indexOf(WIP_MARKER)).trimEnd()
+    : existingBody;
+
+  if (newTitle === pr.title && newBody === existingBody) return;
+
+  await octokit.rest.pulls.update({ owner, repo, pull_number: prNumber, title: newTitle, body: newBody });
+  console.log(`Cleared WIP status from PR #${prNumber}`);
+}
+
+/**
  * After Claude runs, find any PR it created for the given branch and ensure
  * the body contains "Fixes #<issueNumber>" so GitHub auto-closes the issue on merge.
  */
@@ -291,6 +320,8 @@ async function run() {
   // Paths reverted to the PR base branch, which cleanup must not commit back
   // onto the PR author's branch. Empty unless restoreConfigFromBase ran.
   let restoredConfigPaths: string[] = [];
+  // All PR numbers that were marked [WIP] this run — cleared in finally.
+  const wipPrNumbers: number[] = [];
   // Track whether we've completed prepare phase, so we can attribute errors correctly
   let prepareCompleted = false;
   try {
@@ -385,6 +416,7 @@ async function run() {
           context.repository.repo,
           context.entityNumber,
         );
+        wipPrNumbers.push(context.entityNumber);
       } catch (err) {
         console.warn(`Could not mark PR as in-progress: ${err}`);
       }
@@ -636,6 +668,7 @@ async function run() {
               context.repository.repo,
               newPr.number,
             );
+            wipPrNumbers.push(newPr.number);
           } catch (err) {
             console.warn(`Could not mark new PR as in-progress: ${err}`);
           }
@@ -667,6 +700,22 @@ async function run() {
     core.setFailed(`Action failed with error: ${redactSecrets(errorMessage)}`);
   } finally {
     // Phase 4: Cleanup (always runs)
+
+    // Remove [WIP] from every PR we marked in-progress this run.
+    if (octokit && context && isEntityContext(context) && wipPrNumbers.length > 0) {
+      for (const prNum of wipPrNumbers) {
+        try {
+          await clearPRWIPStatus(
+            octokit,
+            context.repository.owner,
+            context.repository.repo,
+            prNum,
+          );
+        } catch (err) {
+          console.warn(`Could not clear WIP status from PR #${prNum}: ${err}`);
+        }
+      }
+    }
 
     // Update tracking comment
     if (
