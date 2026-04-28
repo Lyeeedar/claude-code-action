@@ -70,6 +70,7 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   contents: "write",
   pull_requests: "write",
   issues: "write",
+  workflows: "write",
 };
 
 export function parseAdditionalPermissions():
