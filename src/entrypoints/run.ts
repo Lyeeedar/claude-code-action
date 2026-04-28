@@ -312,6 +312,8 @@ async function run() {
   let octokit: Octokits | undefined;
   // All PR numbers that were marked [WIP] this run — cleared in finally.
   const wipPrNumbers: number[] = [];
+  // New PRs created from issues that need "Fixes #N" added after WIP is cleared.
+  const pendingIssueLinks: { prNumber: number; issueNumber: number }[] = [];
   // Track whether we've completed prepare phase, so we can attribute errors correctly
   let prepareCompleted = false;
   try {
@@ -636,18 +638,10 @@ async function run() {
         if (newPrs.length > 0) {
           const newPr = newPrs[0];
 
+          // Defer "Fixes #N" injection to the finally block (after WIP is cleared)
+          // to avoid the issue link being overwritten by markPRAsInProgress.
           if (modeName === "tag") {
-            try {
-              await patchPRWithIssueLink(
-                octokit,
-                context.repository.owner,
-                context.repository.repo,
-                claudeBranch,
-                context.entityNumber,
-              );
-            } catch (err) {
-              console.warn(`Could not patch PR with issue link: ${err}`);
-            }
+            pendingIssueLinks.push({ prNumber: newPr.number, issueNumber: context.entityNumber });
           }
 
           try {
@@ -701,6 +695,23 @@ async function run() {
           );
         } catch (err) {
           console.warn(`Could not clear WIP status from PR #${prNum}: ${err}`);
+        }
+      }
+    }
+
+    // Inject "Fixes #N" after WIP is cleared so it isn't overwritten.
+    if (octokit && context && isEntityContext(context) && pendingIssueLinks.length > 0) {
+      for (const { prNumber, issueNumber } of pendingIssueLinks) {
+        try {
+          await patchPRWithIssueLink(
+            octokit,
+            context.repository.owner,
+            context.repository.repo,
+            claudeBranch!,
+            issueNumber,
+          );
+        } catch (err) {
+          console.warn(`Could not patch PR #${prNumber} with issue link: ${err}`);
         }
       }
     }
