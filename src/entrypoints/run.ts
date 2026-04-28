@@ -343,14 +343,18 @@ async function run() {
     process.env.GH_TOKEN = githubToken;
 
     // Reconfigure git to use our app token (which has workflows: write).
-    // actions/checkout sets up extraheader with the workflow GITHUB_TOKEN, which
-    // may lack the workflows scope. Override it so git push uses the right token.
+    // actions/checkout sets an extraheader in the local repo config with the
+    // workflow GITHUB_TOKEN. We unset it (local + global) first to avoid a
+    // duplicate Authorization header (which causes GitHub to return 400), then
+    // set a fresh global header with our app token.
     try {
+      const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
       const b64 = Buffer.from(`x-access-token:${githubToken}`).toString("base64");
-      execSync(
-        `git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic ${b64}"`,
-        { stdio: "ignore" },
-      );
+      const header = `AUTHORIZATION: basic ${b64}`;
+      // Unset any existing header at both scopes (nothrow — may not exist)
+      execSync(`git config --unset http.https://github.com/.extraheader || true`, { cwd: workspace, stdio: "ignore", shell: "/bin/bash" });
+      execSync(`git config --global --unset http.https://github.com/.extraheader || true`, { stdio: "ignore", shell: "/bin/bash" });
+      execSync(`git config --global http.https://github.com/.extraheader "${header}"`, { stdio: "ignore" });
     } catch {
       // Non-fatal — git push may still work with the original credential.
     }
