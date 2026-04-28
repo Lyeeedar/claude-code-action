@@ -342,19 +342,17 @@ async function run() {
     process.env.GITHUB_TOKEN = githubToken;
     process.env.GH_TOKEN = githubToken;
 
-    // Reconfigure git to use our app token (which has workflows: write).
-    // actions/checkout sets an extraheader in the local repo config with the
-    // workflow GITHUB_TOKEN. We unset it (local + global) first to avoid a
-    // duplicate Authorization header (which causes GitHub to return 400), then
-    // set a fresh global header with our app token.
+    // Replace the git extraheader actions/checkout set with our token (which has
+    // workflows: write). --replace-all does an atomic in-place swap so there is
+    // never more than one Authorization header, avoiding the 400 "Duplicate header"
+    // error that happens when a local + global header are both present.
     try {
       const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
       const b64 = Buffer.from(`x-access-token:${githubToken}`).toString("base64");
-      const header = `AUTHORIZATION: basic ${b64}`;
-      // Unset any existing header at both scopes (nothrow — may not exist)
-      execSync(`git config --unset http.https://github.com/.extraheader || true`, { cwd: workspace, stdio: "ignore", shell: "/bin/bash" });
-      execSync(`git config --global --unset http.https://github.com/.extraheader || true`, { stdio: "ignore", shell: "/bin/bash" });
-      execSync(`git config --global http.https://github.com/.extraheader "${header}"`, { stdio: "ignore" });
+      execSync(
+        `git config --local --replace-all http.https://github.com/.extraheader "AUTHORIZATION: basic ${b64}"`,
+        { cwd: workspace, stdio: "ignore" },
+      );
     } catch {
       // Non-fatal — git push may still work with the original credential.
     }
