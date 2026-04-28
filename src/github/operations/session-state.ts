@@ -24,11 +24,10 @@ export async function loadSessionState(
   const branch = branchName(entityType, entityNumber);
   console.log(`[session] Loading session state from branch ${branch}...`);
 
-  const fetch = await $`git -C ${repoPath} fetch origin ${branch}:refs/remotes/origin/${branch}`
-    .quiet()
-    .nothrow();
+  const fetch = await $`git -C ${repoPath} fetch origin refs/heads/${branch}`.nothrow();
   if (fetch.exitCode !== 0) {
-    console.log(`[session] No session branch found (${branch}) — starting fresh`);
+    const stderr = fetch.stderr.toString().trim();
+    console.log(`[session] No session branch found (${branch}) — ${stderr || "fetch failed"}`);
     return undefined;
   }
 
@@ -36,7 +35,7 @@ export async function loadSessionState(
   await mkdir(tmpDir, { recursive: true });
 
   const extract =
-    await $`git -C ${repoPath} archive "origin/${branch}" | tar -x -C ${tmpDir}`
+    await $`git -C ${repoPath} archive FETCH_HEAD | tar -x -C ${tmpDir}`
       .quiet()
       .nothrow();
   if (extract.exitCode !== 0) {
