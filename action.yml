@@ -98,7 +98,7 @@ inputs:
   model:
     description: "Medium/primary tier model spec (sonnet equivalent — used for almost all work). Format: 'provider/model-name' e.g. 'kimi/kimi-k2'."
     required: false
-    default: ""
+    default: "minimax/MiniMax-M2.7"
   model_cheap:
     description: "Small/fast tier model spec (haiku equivalent — lightweight internal tasks). Format: 'provider/model-name'. Defaults to 'model' if not set."
     required: false
