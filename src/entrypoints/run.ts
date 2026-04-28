@@ -342,6 +342,19 @@ async function run() {
     process.env.GITHUB_TOKEN = githubToken;
     process.env.GH_TOKEN = githubToken;
 
+    // Reconfigure git to use our app token (which has workflows: write).
+    // actions/checkout sets up extraheader with the workflow GITHUB_TOKEN, which
+    // may lack the workflows scope. Override it so git push uses the right token.
+    try {
+      const b64 = Buffer.from(`x-access-token:${githubToken}`).toString("base64");
+      execSync(
+        `git config --global http.https://github.com/.extraheader "AUTHORIZATION: basic ${b64}"`,
+        { stdio: "ignore" },
+      );
+    } catch {
+      // Non-fatal — git push may still work with the original credential.
+    }
+
     // Check write permissions (only for entity contexts)
     if (isEntityContext(context)) {
       const hasWritePermissions = await checkWritePermissions(
