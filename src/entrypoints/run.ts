@@ -342,26 +342,6 @@ async function run() {
     process.env.GITHUB_TOKEN = githubToken;
     process.env.GH_TOKEN = githubToken;
 
-    // Reconfigure git auth so pushes use our token (which has workflows: write).
-    // Strategy:
-    //  1. Disable any credential helper for this repo — helpers can proactively
-    //     send stored credentials alongside the extraheader, causing a
-    //     "Duplicate header: Authorization" 400 from GitHub.
-    //  2. Atomically replace the extraheader actions/checkout wrote with ours.
-    // Both steps are local-only so we don't pollute the global git config.
-    try {
-      const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
-      const b64 = Buffer.from(`x-access-token:${githubToken}`).toString("base64");
-      // Empty string disables credential helpers at local scope without removing global ones
-      execSync(`git config --local credential.helper ""`, { cwd: workspace, stdio: "ignore" });
-      execSync(
-        `git config --local --replace-all http.https://github.com/.extraheader "AUTHORIZATION: basic ${b64}"`,
-        { cwd: workspace, stdio: "ignore" },
-      );
-    } catch {
-      // Non-fatal — git push may still work with the original credential.
-    }
-
     // Check write permissions (only for entity contexts)
     if (isEntityContext(context)) {
       const hasWritePermissions = await checkWritePermissions(
