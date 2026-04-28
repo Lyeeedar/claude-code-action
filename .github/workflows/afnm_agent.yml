@@ -21,12 +21,6 @@ jobs:
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@agent') || contains(github.event.issue.title, '@agent'))) ||
       (github.event_name == 'pull_request_review' && endsWith(github.event.pull_request.user.login, '[bot]') && github.event.review.state != 'approved')
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
-      id-token: write
-      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
