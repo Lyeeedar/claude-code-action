@@ -58,8 +58,8 @@ export async function loadSessionState(
   console.log(`[session] Found ${parts.length} part(s), reassembling...`);
 
   const archivePath = join(tmpDir, "claude-projects.tar.gz");
-  const partGlob = join(tmpDir, `${PART_PREFIX}*`);
-  const reassemble = await $`cat ${partGlob} > ${archivePath}`.quiet().nothrow();
+  const partPaths = parts.map((p) => join(tmpDir, p)).join(" ");
+  const reassemble = await $`bash -c ${`cat ${partPaths} > ${archivePath}`}`.quiet().nothrow();
   if (reassemble.exitCode !== 0) {
     console.log(`[session] Failed to reassemble archive parts`);
     return undefined;
