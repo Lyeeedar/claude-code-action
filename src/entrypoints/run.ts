@@ -342,13 +342,18 @@ async function run() {
     process.env.GITHUB_TOKEN = githubToken;
     process.env.GH_TOKEN = githubToken;
 
-    // Replace the git extraheader actions/checkout set with our token (which has
-    // workflows: write). --replace-all does an atomic in-place swap so there is
-    // never more than one Authorization header, avoiding the 400 "Duplicate header"
-    // error that happens when a local + global header are both present.
+    // Reconfigure git auth so pushes use our token (which has workflows: write).
+    // Strategy:
+    //  1. Disable any credential helper for this repo — helpers can proactively
+    //     send stored credentials alongside the extraheader, causing a
+    //     "Duplicate header: Authorization" 400 from GitHub.
+    //  2. Atomically replace the extraheader actions/checkout wrote with ours.
+    // Both steps are local-only so we don't pollute the global git config.
     try {
       const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
       const b64 = Buffer.from(`x-access-token:${githubToken}`).toString("base64");
+      // Empty string disables credential helpers at local scope without removing global ones
+      execSync(`git config --local credential.helper ""`, { cwd: workspace, stdio: "ignore" });
       execSync(
         `git config --local --replace-all http.https://github.com/.extraheader "AUTHORIZATION: basic ${b64}"`,
         { cwd: workspace, stdio: "ignore" },
