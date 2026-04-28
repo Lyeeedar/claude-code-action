@@ -562,38 +562,6 @@ async function run() {
       }
     }
 
-    // Stage, commit, and push any work Claude left behind.
-    // Runs unconditionally so work is never silently lost or left unpushed.
-    if (claudeBranch) {
-      try {
-        const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
-
-        // Stage everything and commit if there are changes.
-        const status = execSync("git status --porcelain", { cwd: workspace, encoding: "utf-8" }).trim();
-        if (status) {
-          console.log("Staging and committing uncommitted changes left by Claude...");
-          execSync("git add -A", { cwd: workspace, stdio: "inherit" });
-          execSync(
-            `git commit -m "chore: apply remaining changes from Claude session"`,
-            { cwd: workspace, stdio: "inherit" },
-          );
-        }
-
-        // Push any commits not yet on remote.
-        const unpushed = execSync(
-          "git log @{u}..HEAD --oneline 2>/dev/null || true",
-          { cwd: workspace, encoding: "utf-8" },
-        ).trim();
-        if (unpushed) {
-          console.log(`Pushing ${unpushed.split("\n").length} unpushed commit(s) on ${claudeBranch}...`);
-          execSync(`git push origin ${claudeBranch}`, { cwd: workspace, stdio: "inherit" });
-          console.log("Push successful");
-        }
-      } catch (err) {
-        console.warn(`Post-run commit/push failed (non-fatal): ${err}`);
-      }
-    }
-
     // Run post-steps for schedule mode (always, regardless of Claude's conclusion)
     if (
       modeName === "schedule" &&
@@ -682,6 +650,28 @@ async function run() {
     core.setFailed(`Action failed with error: ${errorMessage}`);
   } finally {
     // Phase 4: Cleanup (always runs)
+
+    // Stage, commit, and push any work Claude left behind.
+    // Must be in finally so it runs even if runClaude threw an exception.
+    if (claudeBranch) {
+      try {
+        const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
+        const status = execSync("git status --porcelain", { cwd: workspace, encoding: "utf-8" }).trim();
+        if (status) {
+          console.log("Staging and committing uncommitted changes left by Claude...");
+          execSync("git add -A", { cwd: workspace, stdio: "inherit" });
+          execSync(`git commit -m "chore: apply remaining changes from Claude session"`, { cwd: workspace, stdio: "inherit" });
+        }
+        const unpushed = execSync("git log @{u}..HEAD --oneline 2>/dev/null || true", { cwd: workspace, encoding: "utf-8" }).trim();
+        if (unpushed) {
+          console.log(`Pushing ${unpushed.split("\n").length} unpushed commit(s) on ${claudeBranch}...`);
+          execSync(`git push origin ${claudeBranch}`, { cwd: workspace, stdio: "inherit" });
+          console.log("Push successful");
+        }
+      } catch (err) {
+        console.warn(`Post-run commit/push failed (non-fatal): ${err}`);
+      }
+    }
 
     // Remove [WIP] from every PR we marked in-progress this run.
     if (octokit && context && isEntityContext(context) && wipPrNumbers.length > 0) {
