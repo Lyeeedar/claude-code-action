@@ -22,11 +22,15 @@ export async function loadSessionState(
   entityNumber: number,
 ): Promise<string | undefined> {
   const branch = branchName(entityType, entityNumber);
+  console.log(`[session] Loading session state from branch ${branch}...`);
 
   const fetch = await $`git -C ${repoPath} fetch origin ${branch}:refs/remotes/origin/${branch}`
     .quiet()
     .nothrow();
-  if (fetch.exitCode !== 0) return undefined;
+  if (fetch.exitCode !== 0) {
+    console.log(`[session] No session branch found (${branch}) — starting fresh`);
+    return undefined;
+  }
 
   const tmpDir = `${process.env.RUNNER_TEMP || "/tmp"}/claude-session-restore-${entityNumber}`;
   await mkdir(tmpDir, { recursive: true });
@@ -35,28 +39,43 @@ export async function loadSessionState(
     await $`git -C ${repoPath} archive "origin/${branch}" | tar -x -C ${tmpDir}`
       .quiet()
       .nothrow();
-  if (extract.exitCode !== 0) return undefined;
+  if (extract.exitCode !== 0) {
+    console.log(`[session] Failed to extract session branch`);
+    return undefined;
+  }
 
   const sessionIdPath = join(tmpDir, "session-id.txt");
-  if (!existsSync(sessionIdPath)) return undefined;
+  if (!existsSync(sessionIdPath)) {
+    console.log(`[session] No session-id.txt in branch`);
+    return undefined;
+  }
 
-  // Reassemble split parts into a single archive
   const allFiles = await readdir(tmpDir).catch(() => [] as string[]);
   const parts = allFiles.filter((f) => f.startsWith(PART_PREFIX)).sort();
-  if (parts.length === 0) return undefined;
+  if (parts.length === 0) {
+    console.log(`[session] No archive parts found in branch`);
+    return undefined;
+  }
+  console.log(`[session] Found ${parts.length} part(s), reassembling...`);
 
   const archivePath = join(tmpDir, "claude-projects.tar.gz");
   const partGlob = join(tmpDir, `${PART_PREFIX}*`);
   const reassemble = await $`cat ${partGlob} > ${archivePath}`.quiet().nothrow();
-  if (reassemble.exitCode !== 0) return undefined;
+  if (reassemble.exitCode !== 0) {
+    console.log(`[session] Failed to reassemble archive parts`);
+    return undefined;
+  }
 
   const claudeDir = homedir() + "/.claude";
   await mkdir(claudeDir, { recursive: true });
   const restore = await $`tar -xzf ${archivePath} -C ${claudeDir}`.quiet().nothrow();
-  if (restore.exitCode !== 0) return undefined;
+  if (restore.exitCode !== 0) {
+    console.log(`[session] Failed to extract archive into ~/.claude`);
+    return undefined;
+  }
 
   const sessionId = (await readFile(sessionIdPath, "utf-8")).trim();
-  console.log(`Restored session ${sessionId} for ${entityType}-${entityNumber} (${parts.length} part(s))`);
+  console.log(`[session] Restored session ${sessionId} for ${entityType}-${entityNumber} (${parts.length} part(s))`);
   return sessionId;
 }
 
