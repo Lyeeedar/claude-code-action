@@ -79,7 +79,7 @@ export async function setupClaudeCodeSettings(
       `has_changes=bool(g.stdout.strip())\n` +
       `has_unpushed=p.returncode!=0 or bool(p.stdout.strip())\n` +
       `head_moved=h.returncode==0 and h.stdout.strip()!=os.environ.get('CLAUDE_INITIAL_HEAD','')\n` +
-      `if not has_changes and not has_unpushed and not head_moved: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'You have not made any code changes. Your job is to implement fixes and improvements, not just review or explain. Go back and make the actual changes required.'}}))"`;
+      `if not has_changes and not has_unpushed and not head_moved: print(json.dumps({'decision':'block','reason':'You have not made any code changes. Your job is to implement fixes and improvements, not just review or explain. Go back and make the actual changes required.'}))"` ;
     const stopHook = {
       hooks: [{ type: "command", command, statusMessage: "Checking for edits..." }],
     };
@@ -89,7 +89,7 @@ export async function setupClaudeCodeSettings(
     console.log(`Injected Stop hook to enforce edits (mode: ${process.env.CLAUDE_MODE})`);
   }
 
-  // Inject a Stop hook that runs `npm run lint` (if the script exists) and blocks if it fails.
+  // Inject a Stop hook that runs `npm run lint` and blocks if it fails.
   {
     const command =
       `python3 -c "import subprocess,json,os,sys,traceback\n` +
@@ -106,14 +106,10 @@ export async function setupClaudeCodeSettings(
       `  err=r.stderr or ''\n` +
       `  log.write('[lint-hook] exit=' + str(r.returncode) + '\\nstdout=' + out[:500] + '\\nstderr=' + err[:500] + '\\n'); log.flush()\n` +
       `  if r.returncode!=0:\n` +
-      `    try:\n` +
-      `      payload=json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'Lint errors found. Fix them before finishing:\\\\n\\\\n'+out+err}})\n` +
-      `      log.write('[lint-hook] printing payload\\n'); log.flush()\n` +
-      `      print(payload)\n` +
-      `      log.write('[lint-hook] payload printed\\n'); log.flush()\n` +
-      `    except Exception:\n` +
-      `      log.write('[lint-hook] EXCEPTION in print:\\n' + traceback.format_exc() + '\\n'); log.flush()\n` +
-      `      raise\n` +
+      `    payload=json.dumps({'decision':'block','reason':'Lint errors found. Fix them before finishing:\\\\n\\\\n'+out+err})\n` +
+      `    log.write('[lint-hook] printing payload\\n'); log.flush()\n` +
+      `    print(payload,flush=True)\n` +
+      `    log.write('[lint-hook] payload printed\\n'); log.flush()\n` +
       `except Exception:\n` +
       `  log.write('[lint-hook] EXCEPTION:\\n' + traceback.format_exc() + '\\n'); log.flush()\n` +
       `  raise\n` +
@@ -138,7 +134,7 @@ export async function setupClaudeCodeSettings(
       `r=subprocess.run(['gh','api',f'/repos/{repo}/issues/comments/{cid}'],capture_output=True,text=True)\n` +
       `if r.returncode!=0: sys.exit(0)\n` +
       `body=json.loads(r.stdout).get('body','')\n` +
-      `if '- [ ]' in body: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'The tracking comment still has unchecked items. Either complete the remaining work or update the checkboxes to reflect what was actually accomplished.'}}))"`;
+      `if '- [ ]' in body: print(json.dumps({'decision':'block','reason':'The tracking comment still has unchecked items. Either complete the remaining work or update the checkboxes to reflect what was actually accomplished.'}))"` ;
     const stopHook = {
       hooks: [{ type: "command", command, statusMessage: "Checking tracking comment..." }],
     };
