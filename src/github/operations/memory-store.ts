@@ -1,6 +1,5 @@
-import { mkdir, readdir, readFile, writeFile } from "fs/promises";
+import { mkdir, readdir, readFile } from "fs/promises";
 import { existsSync } from "fs";
-import { homedir } from "os";
 import { join } from "path";
 import { $ } from "bun";
 import type { Octokits } from "../api/client";
@@ -8,41 +7,19 @@ import type { Octokits } from "../api/client";
 const MEMORY_BRANCH = "claude-memory";
 
 /**
- * Write the memsearch config pointing at workspace-local paths and
- * configuring OpenAI text-embedding-3-small for embeddings.
- * The OPENAI_API_KEY env var is picked up automatically by the OpenAI client.
+ * Fetch the shared claude-memory branch and restore all markdown files into
+ * .memsearch/memory/ inside the workspace so the memsearch plugin can find them.
+ * The plugin's SessionStart/UserPromptSubmit hooks handle indexing and injection.
  */
-async function writeMemsearchConfig(memoryDir: string, dbPath: string): Promise<void> {
-  const configDir = join(homedir(), ".memsearch");
-  await mkdir(configDir, { recursive: true });
-  const toml =
-    `[memory]\ndir = "${memoryDir}"\n\n` +
-    `[embedding]\nprovider = "openai"\nmodel = "text-embedding-3-small"\n\n` +
-    `[milvus]\nuri = "${dbPath}"\n`;
-  await writeFile(join(configDir, "config.toml"), toml, "utf-8");
-}
-
-/**
- * Fetch the shared claude-memory branch, restore all markdown files into
- * .memsearch/memory/ inside the workspace, rebuild the vector index, then
- * run a semantic search for the given query and return the results.
- * Returns undefined (non-fatal) if anything fails or there is no memory yet.
- */
-export async function setupMemoryStore(
-  repoPath: string,
-  searchQuery: string,
-): Promise<string | undefined> {
+export async function restoreMemoryFiles(repoPath: string): Promise<void> {
   const memoryDir = join(repoPath, ".memsearch", "memory");
-  const dbPath    = join(repoPath, ".memsearch", "milvus.db");
-
   await mkdir(memoryDir, { recursive: true });
-  await writeMemsearchConfig(memoryDir, dbPath);
 
   console.log(`[memory] Fetching memory store from branch ${MEMORY_BRANCH}...`);
   const fetch = await $`git -C ${repoPath} fetch origin refs/heads/${MEMORY_BRANCH}`.nothrow();
   if (fetch.exitCode !== 0) {
     console.log("[memory] No memory branch yet — starting fresh");
-    return undefined;
+    return;
   }
 
   const extract = await $`git -C ${repoPath} archive FETCH_HEAD | tar -x -C ${memoryDir}`
@@ -50,38 +27,17 @@ export async function setupMemoryStore(
     .nothrow();
   if (extract.exitCode !== 0) {
     console.log("[memory] Failed to extract memory files — starting fresh");
-    return undefined;
+    return;
   }
 
   const files = await readdir(memoryDir).catch(() => [] as string[]);
   const mdFiles = files.filter((f) => f.endsWith(".md"));
   console.log(`[memory] Restored ${mdFiles.length} memory file(s)`);
-
-  if (mdFiles.length === 0) return undefined;
-
-  console.log("[memory] Rebuilding vector index (may download ONNX model on first run)...");
-  const index = await $`memsearch index ${memoryDir}`.nothrow();
-  if (index.exitCode !== 0) {
-    console.warn(`[memory] Index build failed (non-fatal): ${index.stderr.toString().trim()}`);
-    return undefined;
-  }
-  console.log("[memory] Vector index ready");
-
-  console.log("[memory] Searching for relevant memories...");
-  const search = await $`memsearch search ${searchQuery.slice(0, 500)}`.nothrow();
-  if (search.exitCode !== 0 || !search.stdout.toString().trim()) {
-    return undefined;
-  }
-
-  const results = search.stdout.toString().trim();
-  console.log(`[memory] Found relevant memories (${results.length} chars)`);
-  return results;
 }
 
 /**
  * Commit any new or updated markdown files in .memsearch/memory/ back to
- * the shared claude-memory branch.  Uses the same git-worktree pattern as
- * saveSessionState.  Retries once on concurrent-push conflict.
+ * the shared claude-memory branch.  Retries once on concurrent-push conflict.
  */
 export async function saveMemoryStore(repoPath: string): Promise<void> {
   const memoryDir = join(repoPath, ".memsearch", "memory");
@@ -130,7 +86,6 @@ export async function saveMemoryStore(repoPath: string): Promise<void> {
     const timestamp = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
     await $`git -C ${worktreePath} commit -m "memory: update @ ${timestamp}"`.quiet();
 
-    // Push; if a concurrent run pushed first, pull-rebase and retry once.
     const push = await $`git -C ${worktreePath} push origin "HEAD:refs/heads/${MEMORY_BRANCH}"`
       .nothrow();
     if (push.exitCode !== 0) {
@@ -146,7 +101,7 @@ export async function saveMemoryStore(repoPath: string): Promise<void> {
 }
 
 const MEMORY_ISSUE_TITLE = "🧠 Claude Agent Memory Store";
-const MEMORY_ISSUE_BODY_LIMIT = 60_000; // GitHub issue body limit ~65536 chars
+const MEMORY_ISSUE_BODY_LIMIT = 60_000;
 
 /**
  * Find or create the persistent memory issue and update its body with the
@@ -162,10 +117,9 @@ export async function updateMemoryIssue(
   if (!existsSync(memoryDir)) return;
 
   const allFiles = await readdir(memoryDir).catch(() => [] as string[]);
-  const mdFiles = allFiles.filter((f) => f.endsWith(".md")).sort().reverse(); // newest first
+  const mdFiles = allFiles.filter((f) => f.endsWith(".md")).sort().reverse();
   if (mdFiles.length === 0) return;
 
-  // Build issue body from all memory files
   const sections: string[] = [];
   for (const file of mdFiles) {
     const content = await readFile(join(memoryDir, file), "utf-8").catch(() => "");
@@ -186,7 +140,6 @@ export async function updateMemoryIssue(
       "\n\n…*(truncated — see `claude-memory` branch for full history)*";
   }
 
-  // Find existing memory issue by title (search open + closed so we never duplicate)
   const search = await octokit.rest.issues.listForRepo({
     owner,
     repo,
@@ -203,7 +156,7 @@ export async function updateMemoryIssue(
       repo,
       issue_number: existing.number,
       body,
-      state: "open", // reopen if somehow closed
+      state: "open",
     });
     console.log(`[memory] Updated memory issue #${existing.number}`);
   } else {
