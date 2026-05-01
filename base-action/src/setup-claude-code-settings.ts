@@ -101,8 +101,10 @@ export async function setupClaudeCodeSettings(
       `  subprocess.run(['npm','install','--prefer-offline'],cwd=cwd,capture_output=True)\n` +
       `log.write('[lint-hook] running npm run lint\\n'); log.flush()\n` +
       `r=subprocess.run(['npm','run','lint'],cwd=cwd,capture_output=True,text=True)\n` +
-      `log.write('[lint-hook] exit=' + str(r.returncode) + ' stdout=' + r.stdout[:200] + ' stderr=' + r.stderr[:200] + '\\n'); log.flush()\n` +
-      `if r.returncode!=0: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'Lint errors found. Fix them before finishing:\\\\n\\\\n'+r.stdout+r.stderr}}))"` ;
+      `out=r.stdout or ''\n` +
+      `err=r.stderr or ''\n` +
+      `log.write('[lint-hook] exit=' + str(r.returncode) + '\\nstdout=' + out[:500] + '\\nstderr=' + err[:500] + '\\n'); log.flush()\n` +
+      `if r.returncode!=0: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'Lint errors found. Fix them before finishing:\\\\n\\\\n'+out+err}}))"` ;
     const stopHook = {
       hooks: [{ type: "command", command, statusMessage: "Running lint..." }],
     };
