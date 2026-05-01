@@ -710,6 +710,18 @@ async function run() {
   } finally {
     // Phase 4: Cleanup (always runs)
 
+    // Print lint hook log if it exists (for debugging stop hook errors)
+    try {
+      const lintLog = readFileSync("/tmp/lint-hook.log", "utf-8").trim();
+      if (lintLog) {
+        console.log("=== lint-hook.log ===");
+        console.log(lintLog);
+        console.log("=====================");
+      }
+    } catch {
+      // No log file — hook didn't run or didn't write
+    }
+
     // Stage, commit, and push any work Claude left behind.
     // Must be in finally so it runs even if runClaude threw an exception.
     if (claudeBranch) {
