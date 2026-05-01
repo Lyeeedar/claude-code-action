@@ -237,6 +237,16 @@ export async function prepareMcpConfig(
       };
     }
 
+    // Include code-graph MCP server for semantic code search and call-graph tracing.
+    const workspace = process.env.GITHUB_WORKSPACE;
+    if (workspace) {
+      baseMcpConfig.mcpServers["code-graph"] = {
+        command: "npx",
+        args: ["-y", "@sdsrs/code-graph"],
+        cwd: workspace,
+      };
+    }
+
     // Return only our GitHub servers config
     // User's config will be passed as separate --mcp-config flags
     return JSON.stringify(baseMcpConfig, null, 2);
