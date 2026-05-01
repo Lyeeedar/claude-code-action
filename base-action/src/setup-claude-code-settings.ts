@@ -108,8 +108,7 @@ export async function setupClaudeCodeSettings(
     const command =
       `python3 -c "import subprocess,json,os,sys\n` +
       `cwd=os.environ.get('GITHUB_WORKSPACE','.')\n` +
-      `p=subprocess.run(['npm','run','--json'],capture_output=True,text=True,cwd=cwd)\n` +
-      `if 'lint' not in p.stdout: sys.exit(0)\n` +
+      `if not os.path.isdir(os.path.join(cwd,'node_modules')): subprocess.run(['npm','ci','--prefer-offline'],cwd=cwd)\n` +
       `r=subprocess.run(['npm','run','lint','--','--max-warnings=0'],capture_output=True,text=True,cwd=cwd)\n` +
       `if r.returncode!=0: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'Lint errors found. Fix them before finishing:\\\\n\\\\n'+r.stdout+r.stderr}}))"`;
     const stopHook = {
