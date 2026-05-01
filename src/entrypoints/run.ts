@@ -556,6 +556,26 @@ async function run() {
       console.warn(`[memory] Restore failed (non-fatal): ${err}`);
     }
 
+    // Write memsearch config before Claude starts so the SessionStart hook
+    // picks up OpenAI embeddings instead of downloading the 558MB ONNX model.
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        const memsearchConfigDir = `${process.env.HOME}/.memsearch`;
+        await import("fs/promises").then(({ mkdir, writeFile }) =>
+          mkdir(memsearchConfigDir, { recursive: true }).then(() =>
+            writeFile(
+              `${memsearchConfigDir}/config.toml`,
+              `[embedding]\nprovider = "openai"\nmodel = "text-embedding-3-small"\n`,
+              "utf-8",
+            )
+          )
+        );
+        console.log("[memory] Configured memsearch to use OpenAI embeddings");
+      } catch (err) {
+        console.warn(`[memory] Could not write memsearch config (non-fatal): ${err}`);
+      }
+    }
+
     // Pre-index the codebase with code-graph for enhanced semantic search during the run.
     // incremental-index is fast (<250ms) when the cached index is up-to-date.
     try {
