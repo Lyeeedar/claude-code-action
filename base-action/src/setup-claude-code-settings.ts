@@ -92,19 +92,32 @@ export async function setupClaudeCodeSettings(
   // Inject a Stop hook that runs `npm run lint` (if the script exists) and blocks if it fails.
   {
     const command =
-      `python3 -c "import subprocess,json,os,sys\n` +
+      `python3 -c "import subprocess,json,os,sys,traceback\n` +
       `log=open('/tmp/lint-hook.log','a')\n` +
-      `cwd=os.environ.get('GITHUB_WORKSPACE','.')\n` +
-      `log.write('[lint-hook] cwd=' + cwd + '\\n'); log.flush()\n` +
-      `if not os.path.isdir(os.path.join(cwd,'node_modules')):\n` +
-      `  log.write('[lint-hook] installing node_modules\\n'); log.flush()\n` +
-      `  subprocess.run(['npm','install','--prefer-offline'],cwd=cwd,capture_output=True)\n` +
-      `log.write('[lint-hook] running npm run lint\\n'); log.flush()\n` +
-      `r=subprocess.run(['npm','run','lint'],cwd=cwd,capture_output=True,text=True)\n` +
-      `out=r.stdout or ''\n` +
-      `err=r.stderr or ''\n` +
-      `log.write('[lint-hook] exit=' + str(r.returncode) + '\\nstdout=' + out[:500] + '\\nstderr=' + err[:500] + '\\n'); log.flush()\n` +
-      `if r.returncode!=0: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'Lint errors found. Fix them before finishing:\\\\n\\\\n'+out+err}}))"` ;
+      `try:\n` +
+      `  cwd=os.environ.get('GITHUB_WORKSPACE','.')\n` +
+      `  log.write('[lint-hook] cwd=' + cwd + '\\n'); log.flush()\n` +
+      `  if not os.path.isdir(os.path.join(cwd,'node_modules')):\n` +
+      `    log.write('[lint-hook] installing node_modules\\n'); log.flush()\n` +
+      `    subprocess.run(['npm','install','--prefer-offline'],cwd=cwd,capture_output=True)\n` +
+      `  log.write('[lint-hook] running npm run lint\\n'); log.flush()\n` +
+      `  r=subprocess.run(['npm','run','lint'],cwd=cwd,capture_output=True,text=True)\n` +
+      `  out=r.stdout or ''\n` +
+      `  err=r.stderr or ''\n` +
+      `  log.write('[lint-hook] exit=' + str(r.returncode) + '\\nstdout=' + out[:500] + '\\nstderr=' + err[:500] + '\\n'); log.flush()\n` +
+      `  if r.returncode!=0:\n` +
+      `    try:\n` +
+      `      payload=json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'Lint errors found. Fix them before finishing:\\\\n\\\\n'+out+err}})\n` +
+      `      log.write('[lint-hook] printing payload\\n'); log.flush()\n` +
+      `      print(payload)\n` +
+      `      log.write('[lint-hook] payload printed\\n'); log.flush()\n` +
+      `    except Exception:\n` +
+      `      log.write('[lint-hook] EXCEPTION in print:\\n' + traceback.format_exc() + '\\n'); log.flush()\n` +
+      `      raise\n` +
+      `except Exception:\n` +
+      `  log.write('[lint-hook] EXCEPTION:\\n' + traceback.format_exc() + '\\n'); log.flush()\n` +
+      `  raise\n` +
+      `"`;
     const stopHook = {
       hooks: [{ type: "command", command, statusMessage: "Running lint..." }],
     };
