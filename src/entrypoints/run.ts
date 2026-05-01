@@ -31,7 +31,7 @@ import { prepareScheduleMode, runPostSteps, saveAgentState } from "../modes/sche
 import { checkContainsTrigger } from "../github/validation/trigger";
 import { restoreConfigFromBase } from "../github/operations/restore-config";
 import { loadSessionState, saveSessionState } from "../github/operations/session-state";
-import { setupMemoryStore, saveMemoryStore, updateMemoryIssue } from "../github/operations/memory-store";
+import { restoreMemoryFiles, saveMemoryStore, updateMemoryIssue } from "../github/operations/memory-store";
 import { validateBranchName } from "../github/operations/branch";
 import { collectActionInputsPresence } from "./collect-inputs";
 import { updateCommentLink } from "./update-comment-link";
@@ -179,30 +179,6 @@ async function patchPRWithIssueLink(
   console.log(`Added "Fixes #${issueNumber}" to PR #${pr.number}`);
 }
 
-/**
- * Install memsearch (ONNX-backed local vector search) for the memory system.
- * No-ops if already on PATH.
- */
-async function ensureMemsearch(): Promise<void> {
-  const check = spawn("memsearch", ["--version"], { stdio: "ignore" });
-  const already = await new Promise<boolean>((resolve) => {
-    check.on("close", (code) => resolve(code === 0));
-    check.on("error", () => resolve(false));
-  });
-  if (already) return;
-
-  console.log("Installing memsearch...");
-  await new Promise<void>((resolve, reject) => {
-    // Pass as array so the shell never glob-expands [onnx]
-    const child = spawn("uv", ["tool", "install", "memsearch[openai]"], { stdio: "inherit" });
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`memsearch install failed with exit code ${code}`));
-    });
-    child.on("error", reject);
-  });
-  console.log("memsearch installed");
-}
 
 /**
  * Install Claude Code CLI, handling retry logic and custom executable paths.
@@ -438,12 +414,11 @@ async function run() {
       }
     }
 
-    // Phase 2: Install toolchain dependencies (uv + memsearch always; uv already needed for minimax)
+    // Phase 2: Install uv (needed for minimax MCP)
     try {
       await ensureUv();
-      await ensureMemsearch();
     } catch (err) {
-      console.warn(`[memory] Could not install memsearch (non-fatal): ${err}`);
+      console.warn(`Could not install uv (non-fatal): ${err}`);
     }
 
     // Phase 2b: Install Claude Code CLI
@@ -525,9 +500,12 @@ async function run() {
 
     await setupClaudeCodeSettings(process.env.INPUT_SETTINGS);
 
+    const memsearchMarketplace = "https://github.com/zilliztech/memsearch.git";
+    const userMarketplaces = process.env.INPUT_PLUGIN_MARKETPLACES || "";
+    const userPlugins = process.env.INPUT_PLUGINS || "";
     await installPlugins(
-      process.env.INPUT_PLUGIN_MARKETPLACES,
-      process.env.INPUT_PLUGINS,
+      [memsearchMarketplace, userMarketplaces].filter(Boolean).join("\n"),
+      ["memsearch", userPlugins].filter(Boolean).join("\n"),
       claudeExecutable,
     );
 
@@ -569,31 +547,14 @@ async function run() {
       ? `${prepareResult.claudeArgs || ""} --resume ${priorSessionId}`.trim()
       : prepareResult.claudeArgs;
 
-    // Set up shared cross-run memory store and pre-fetch relevant memories.
-    // Use the first 500 chars of the prompt file as the semantic search query —
-    // it already contains the issue/PR title, body, and trigger comment.
+    // Restore persisted memory files so the memsearch plugin can find them.
+    // The plugin's hooks handle indexing, search injection, and saving new memories.
     const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
-    let memorySearchResults: string | undefined;
     try {
-      const promptSnippet = existsSync(promptConfig.path)
-        ? readFileSync(promptConfig.path, "utf-8").slice(0, 500).trim()
-        : "";
-      memorySearchResults = await setupMemoryStore(workspace, promptSnippet);
+      await restoreMemoryFiles(workspace);
     } catch (err) {
-      console.warn(`[memory] Setup failed (non-fatal): ${err}`);
+      console.warn(`[memory] Restore failed (non-fatal): ${err}`);
     }
-
-    const today = new Date().toISOString().slice(0, 10);
-    const memoryNote =
-      (memorySearchResults
-        ? `\n\nRELEVANT MEMORIES FROM PAST RUNS:\n${memorySearchResults}\n\n---`
-        : "") +
-      `\n\nPERSISTENT MEMORY SYSTEM: A shared cross-run memory store lives in ` +
-      `.memsearch/memory/. You can run \`memsearch search "<query>"\` at any time for more. ` +
-      `Whenever you learn something that would help future runs (architecture decisions, ` +
-      `patterns, gotchas, user corrections, how subsystems connect), append it to ` +
-      `\`.memsearch/memory/${today}.md\`:\n` +
-      `## <Short Title>\n<Detailed content>\n\nTags: <comma-separated tags>`;
 
     // Pre-index the codebase with code-graph for enhanced semantic search during the run.
     // incremental-index is fast (<250ms) when the cached index is up-to-date.
@@ -620,7 +581,7 @@ async function run() {
 
     const claudeResult: ClaudeRunResult = await runClaude(promptConfig.path, {
       claudeArgs: claudeArgsWithResume,
-      appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote + memoryNote || undefined,
+      appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote || undefined,
       model: process.env.ANTHROPIC_MODEL,
       pathToClaudeCodeExecutable: claudeExecutable,
       showFullOutput: process.env.INPUT_SHOW_FULL_OUTPUT,
