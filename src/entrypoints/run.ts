@@ -595,6 +595,29 @@ async function run() {
       `\`.memsearch/memory/${today}.md\`:\n` +
       `## <Short Title>\n<Detailed content>\n\nTags: <comma-separated tags>`;
 
+    // Pre-index the codebase with code-graph for enhanced semantic search during the run.
+    // incremental-index is fast (<250ms) when the cached index is up-to-date.
+    try {
+      console.log("[code-graph] Running incremental index...");
+      await new Promise<void>((resolve) => {
+        const child = spawn(
+          "npx",
+          ["-y", "@sdsrs/code-graph", "incremental-index"],
+          { stdio: "inherit", cwd: workspace },
+        );
+        child.on("close", (code) => {
+          if (code !== 0) console.warn(`[code-graph] Indexing exited with code ${code} (non-fatal)`);
+          resolve();
+        });
+        child.on("error", (err) => {
+          console.warn(`[code-graph] Indexing error (non-fatal): ${err}`);
+          resolve();
+        });
+      });
+    } catch (err) {
+      console.warn(`[code-graph] Indexing failed (non-fatal): ${err}`);
+    }
+
     const claudeResult: ClaudeRunResult = await runClaude(promptConfig.path, {
       claudeArgs: claudeArgsWithResume,
       appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote + memoryNote || undefined,
