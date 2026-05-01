@@ -710,18 +710,6 @@ async function run() {
   } finally {
     // Phase 4: Cleanup (always runs)
 
-    // Print lint hook log if it exists (for debugging stop hook errors)
-    try {
-      const lintLog = readFileSync("/tmp/lint-hook.log", "utf-8").trim();
-      if (lintLog) {
-        console.log("=== lint-hook.log ===");
-        console.log(lintLog);
-        console.log("=====================");
-      }
-    } catch {
-      // No log file — hook didn't run or didn't write
-    }
-
     // Stage, commit, and push any work Claude left behind.
     // Must be in finally so it runs even if runClaude threw an exception.
     if (claudeBranch) {
@@ -733,12 +721,9 @@ async function run() {
           execSync("git add -A", { cwd: workspace, stdio: "inherit" });
           execSync(`git commit -m "chore: apply remaining changes from Claude session"`, { cwd: workspace, stdio: "inherit" });
         }
-        const unpushed = execSync("git log @{u}..HEAD --oneline 2>/dev/null || true", { cwd: workspace, encoding: "utf-8" }).trim();
-        if (unpushed) {
-          console.log(`Pushing ${unpushed.split("\n").length} unpushed commit(s) on ${claudeBranch}...`);
-          execSync(`git push origin ${claudeBranch}`, { cwd: workspace, stdio: "inherit" });
-          console.log("Push successful");
-        }
+        console.log(`Pushing branch ${claudeBranch}...`);
+        execSync(`git push origin HEAD:${claudeBranch}`, { cwd: workspace, stdio: "inherit" });
+        console.log("Push successful");
       } catch (err) {
         console.warn(`Post-run commit/push failed (non-fatal): ${err}`);
       }
