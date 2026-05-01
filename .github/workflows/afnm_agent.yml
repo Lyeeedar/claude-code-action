@@ -58,6 +58,7 @@ jobs:
           github_token: ${{ steps.app-token.outputs.token }}
           trigger_phrase: "@agent"
           assignee_trigger: "afnm-agent[bot]"
+          allowed_bots: "afnm-agent[bot]"
           label_trigger: "agent"
           auto_fix_pr_reviews: "true"
           bot_name: "afnm-agent[bot]"
