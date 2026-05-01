@@ -91,7 +91,13 @@ export async function setupClaudeCodeSettings(
 
   // Inject a Stop hook that runs `npm run lint` (if the script exists) and blocks if it fails.
   {
-    const command = `node -e "const {spawnSync}=require('child_process'),fs=require('fs'),cwd=process.env.GITHUB_WORKSPACE||'.';if(!fs.existsSync(cwd+'/node_modules'))spawnSync('npm',['install','--prefer-offline'],{cwd,stdio:'ignore'});const r=spawnSync('npm',['run','lint'],{cwd,encoding:'utf8'});if(r.status!==0)console.log(JSON.stringify({hookSpecificOutput:{hookEventName:'Stop',decision:'block',reason:'Lint errors found. Fix them before finishing:\\\\n\\\\n'+(r.stdout||'')+(r.stderr||'')}}))"`;
+    const command =
+      `python3 -c "import subprocess,json,os,sys\n` +
+      `cwd=os.environ.get('GITHUB_WORKSPACE','.')\n` +
+      `if not os.path.isdir(os.path.join(cwd,'node_modules')):\n` +
+      `  subprocess.run(['npm','install','--prefer-offline'],cwd=cwd,capture_output=True)\n` +
+      `r=subprocess.run(['npm','run','lint'],cwd=cwd,capture_output=True,text=True)\n` +
+      `if r.returncode!=0: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'Lint errors found. Fix them before finishing:\\\\n\\\\n'+r.stdout+r.stderr}}))"` ;
     const stopHook = {
       hooks: [{ type: "command", command, statusMessage: "Running lint..." }],
     };
