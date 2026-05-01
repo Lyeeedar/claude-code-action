@@ -103,6 +103,24 @@ export async function setupClaudeCodeSettings(
     console.log(`Injected Stop hook to enforce edits (mode: ${process.env.CLAUDE_MODE})`);
   }
 
+  // Inject a Stop hook that runs `npm run lint` (if the script exists) and blocks if it fails.
+  {
+    const command =
+      `python3 -c "import subprocess,json,os,sys\n` +
+      `cwd=os.environ.get('GITHUB_WORKSPACE','.')\n` +
+      `p=subprocess.run(['npm','run','--json'],capture_output=True,text=True,cwd=cwd)\n` +
+      `if 'lint' not in p.stdout: sys.exit(0)\n` +
+      `r=subprocess.run(['npm','run','lint','--','--max-warnings=0'],capture_output=True,text=True,cwd=cwd)\n` +
+      `if r.returncode!=0: print(json.dumps({'hookSpecificOutput':{'hookEventName':'Stop','decision':'block','reason':'Lint errors found. Fix them before finishing:\\\\n\\\\n'+r.stdout+r.stderr}}))"`;
+    const stopHook = {
+      hooks: [{ type: "command", command, statusMessage: "Running lint..." }],
+    };
+    const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
+    hooks.Stop = [...(hooks.Stop ?? []), stopHook];
+    settings.hooks = hooks;
+    console.log(`Injected Stop hook for npm run lint`);
+  }
+
   // Inject a Stop hook that checks the tracking comment for unchecked checkboxes.
   // If any remain, Claude must either complete the work or update the checkboxes.
   {
