@@ -21,18 +21,27 @@ jobs:
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@agent') || contains(github.event.issue.title, '@agent'))) ||
       (github.event_name == 'pull_request_review' && endsWith(github.event.pull_request.user.login, '[bot]') && github.event.review.state != 'approved')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # Use the App token so git push of .github/workflows/ files works
+          # (requires the App installation to have the Workflows permission)
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 1
 
       - name: Run Agent
         id: agent
@@ -48,4 +57,5 @@ jobs:
           model: "minimax/MiniMax-M2.7"
           model_expensive: "minimax/MiniMax-M2.7"
           minimax_api_key: ${{ secrets.MINIMAX_API_KEY }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           show_full_output: "true"
