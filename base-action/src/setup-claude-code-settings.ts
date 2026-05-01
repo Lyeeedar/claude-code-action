@@ -63,20 +63,6 @@ export async function setupClaudeCodeSettings(
   settings.enableAllProjectMcpServers = true;
   console.log(`Updated settings with enableAllProjectMcpServers: true`);
 
-  // Register code-graph MCP server for semantic code search, call-graph tracing, and impact analysis.
-  // The server runs via npx so no global install is needed; it reads the .code-graph/index.db
-  // built by the incremental-index step that runs before Claude starts.
-  const workspace = process.env.GITHUB_WORKSPACE;
-  if (workspace) {
-    const mcpServers = (settings.mcpServers ?? {}) as Record<string, unknown>;
-    mcpServers["code-graph"] = {
-      command: "npx",
-      args: ["-y", "@sdsrs/code-graph"],
-      cwd: workspace,
-    };
-    settings.mcpServers = mcpServers;
-    console.log(`Registered code-graph MCP server (workspace: ${workspace})`);
-  }
 
   // Force in-process teammate mode — no tmux available in CI.
   settings.teammateMode = "in-process";
