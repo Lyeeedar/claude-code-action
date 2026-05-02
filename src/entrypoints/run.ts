@@ -308,6 +308,7 @@ async function run() {
   let draftPrUrl: string | undefined;
   let executionFile: string | undefined;
   let claudeSuccess = false;
+  let claudeSessionId: string | undefined;
   let prepareSuccess = true;
   let prepareError: string | undefined;
   let context: GitHubContext | undefined;
@@ -599,27 +600,23 @@ async function run() {
       console.warn(`[code-graph] Indexing failed (non-fatal): ${err}`);
     }
 
-    const claudeResult: ClaudeRunResult = await runClaude(promptConfig.path, {
-      claudeArgs: claudeArgsWithResume,
-      appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote || undefined,
-      model: process.env.ANTHROPIC_MODEL,
-      pathToClaudeCodeExecutable: claudeExecutable,
-      showFullOutput: process.env.INPUT_SHOW_FULL_OUTPUT,
-    });
+    const AGENT_TIMEOUT_MS = 40 * 60 * 1000;
+    const claudeResult: ClaudeRunResult = await Promise.race([
+      runClaude(promptConfig.path, {
+        claudeArgs: claudeArgsWithResume,
+        appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote || undefined,
+        model: process.env.ANTHROPIC_MODEL,
+        pathToClaudeCodeExecutable: claudeExecutable,
+        showFullOutput: process.env.INPUT_SHOW_FULL_OUTPUT,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Agent 40-minute timeout reached — saving work and exiting")), AGENT_TIMEOUT_MS)
+      ),
+    ]);
 
     claudeSuccess = claudeResult.conclusion === "success";
     executionFile = claudeResult.executionFile;
-
-    // Persist session so follow-up triggers can resume the same conversation.
-    if (modeName !== "schedule" && isEntityContext(context) && claudeResult.sessionId) {
-      const entityType = context.isPR ? "pr" : "issue";
-      const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
-      try {
-        await saveSessionState(workspace, entityType, context.entityNumber, claudeResult.sessionId);
-      } catch (err) {
-        console.warn(`Could not save session state: ${err}`);
-      }
-    }
+    claudeSessionId = claudeResult.sessionId;
 
     // Run post-steps for schedule mode (always, regardless of Claude's conclusion)
     if (
@@ -726,6 +723,23 @@ async function run() {
         console.log("Push successful");
       } catch (err) {
         console.warn(`Post-run commit/push failed (non-fatal): ${err}`);
+      }
+    }
+
+    // Persist session so follow-up triggers can resume the same conversation.
+    // Done here (not above) so it runs even when the 40-min timeout fires.
+    if (modeName !== "schedule" && isEntityContext(context)) {
+      try {
+        const sid = claudeSessionId ?? (() => {
+          try { return readFileSync("/tmp/claude-session-id", "utf-8").trim(); } catch { return undefined; }
+        })();
+        if (sid) {
+          const entityType = context.isPR ? "pr" : "issue";
+          const ws = process.env.GITHUB_WORKSPACE || process.cwd();
+          await saveSessionState(ws, entityType, context.entityNumber, sid);
+        }
+      } catch (err) {
+        console.warn(`Could not save session state: ${err}`);
       }
     }
 

@@ -1,5 +1,6 @@
 import * as core from "@actions/core";
 import { readFile, writeFile, access } from "fs/promises";
+import { writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
@@ -160,6 +161,11 @@ export async function runClaudeWithSdk(
   try {
     for await (const message of query({ prompt, options: sdkOptions })) {
       messages.push(message);
+
+      // Persist session_id immediately on init so it survives a timeout.
+      if (message.type === "system" && "subtype" in message && message.subtype === "init" && "session_id" in message && message.session_id) {
+        try { writeFileSync("/tmp/claude-session-id", String(message.session_id)); } catch {}
+      }
 
       const sanitized = sanitizeSdkOutput(message, showFullOutput);
       if (sanitized) {
