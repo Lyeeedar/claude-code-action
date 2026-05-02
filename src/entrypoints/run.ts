@@ -26,6 +26,7 @@ import {
 } from "../github/context";
 import type { GitHubContext } from "../github/context";
 import { detectMode } from "../modes/detector";
+import type { AutoDetectedMode } from "../modes/detector";
 import { prepareTagMode } from "../modes/tag";
 import { prepareAgentMode } from "../modes/agent";
 import { prepareScheduleMode, runPostSteps, saveAgentState } from "../modes/schedule";
@@ -316,6 +317,7 @@ async function run() {
   let executionFile: string | undefined;
   let claudeSuccess = false;
   let claudeSessionId: string | undefined;
+  let modeName: AutoDetectedMode | undefined;
   let prepareSuccess = true;
   let prepareError: string | undefined;
   let context: GitHubContext | undefined;
@@ -333,7 +335,7 @@ async function run() {
     // Phase 1: Prepare
     const actionInputsPresent = collectActionInputsPresence();
     context = parseGitHubContext();
-    const modeName = detectMode(context);
+    modeName = detectMode(context);
     console.log(
       `Auto-detected mode: ${modeName} for event: ${context.eventName}`,
     );
