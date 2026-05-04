@@ -103,8 +103,9 @@ async function markPRAsInProgress(
 
   const { data: pr } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNumber });
 
-  // Prepend [WIP] to the title if not already there
-  const newTitle = pr.title.startsWith("[WIP]") ? pr.title : `[WIP] ${pr.title}`;
+  // Prepend [WIP], stripping any prior [INCOMPLETE] or stale [WIP] prefix first
+  const cleanTitle = pr.title.replace(/^(\[WIP\]\s*|\[INCOMPLETE\]\s*)+/, "");
+  const newTitle = `[WIP] ${cleanTitle}`;
 
   // Build the in-progress line
   const wipLine = jobUrl
