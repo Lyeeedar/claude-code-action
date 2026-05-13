@@ -593,26 +593,24 @@ async function run() {
     }
 
     // Pre-index the codebase with code-graph for enhanced semantic search during the run.
-    // incremental-index is fast (<250ms) when the cached index is up-to-date.
+    // Fire-and-forget — if it finishes during the agent run, great; if not, no harm done.
     try {
-      console.log("[code-graph] Running incremental index...");
-      await new Promise<void>((resolve) => {
-        const child = spawn(
-          "npx",
-          ["-y", "@sdsrs/code-graph", "incremental-index"],
-          { stdio: "inherit", cwd: workspace },
-        );
-        child.on("close", (code) => {
-          if (code !== 0) console.warn(`[code-graph] Indexing exited with code ${code} (non-fatal)`);
-          resolve();
-        });
-        child.on("error", (err) => {
-          console.warn(`[code-graph] Indexing error (non-fatal): ${err}`);
-          resolve();
-        });
+      console.log("[code-graph] Starting incremental index in background...");
+      const cgChild = spawn(
+        "npx",
+        ["-y", "@sdsrs/code-graph", "incremental-index"],
+        { stdio: "inherit", cwd: workspace, detached: false },
+      );
+      cgChild.on("close", (code) => {
+        if (code === 0) console.log("[code-graph] Background indexing finished");
+        else console.warn(`[code-graph] Background indexing exited with code ${code} (non-fatal)`);
       });
+      cgChild.on("error", (err) => {
+        console.warn(`[code-graph] Background indexing error (non-fatal): ${err}`);
+      });
+      cgChild.unref();
     } catch (err) {
-      console.warn(`[code-graph] Indexing failed (non-fatal): ${err}`);
+      console.warn(`[code-graph] Failed to start indexing (non-fatal): ${err}`);
     }
 
     const AGENT_TIMEOUT_MS = 40 * 60 * 1000;
