@@ -50,7 +50,7 @@ jobs:
         with:
           path: |
             ${{ github.workspace }}/.code-graph
-            ~/.cache/code-graph/models
+            ~/.cache/code-graph
           key: code-graph-${{ github.sha }}
           restore-keys: |
             code-graph-
