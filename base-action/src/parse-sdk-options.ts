@@ -334,6 +334,10 @@ export function parseSdkOptions(options: ClaudeOptions): ParsedSdkOptions {
     additionalDirectories:
       additionalDirectories.length > 0 ? additionalDirectories : undefined,
 
+    // Enable ultracode by default — session-only, can't go in settings.json.
+    // Sends xhigh to the model and has Claude orchestrate dynamic workflows.
+    settings: { ultracode: true } as SdkOptions["settings"],
+
     // Pass through claudeArgs as extraArgs - CLI handles --mcp-config, --json-schema, etc.
     // Note: allowedTools and disallowedTools have been removed from extraArgs to prevent duplicates
     extraArgs,
