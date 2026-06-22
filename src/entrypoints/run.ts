@@ -867,5 +867,15 @@ async function run() {
 }
 
 if (import.meta.main) {
-  run();
+  run().then(
+    () => {
+      // Force exit — dangling MCP server subprocesses (uvx, npx, bun) and the
+      // LiteLLM proxy keep Node's event loop alive even after everything is done.
+      process.exit(0);
+    },
+    (err) => {
+      console.error("Unhandled error in run():", err);
+      process.exit(1);
+    },
+  );
 }
