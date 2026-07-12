@@ -14,7 +14,7 @@ import {
   extractOriginalTitle,
   extractOriginalBody,
 } from "../../github/data/fetcher";
-import { createPrompt } from "../../create-prompt";
+import { createPrompt, classifyBugWorkflow } from "../../create-prompt";
 import { isEntityContext } from "../../github/context";
 import type { GitHubContext } from "../../github/context";
 import type { Octokits } from "../../github/api/client";
@@ -64,6 +64,25 @@ export async function prepareTagMode({
     includeCommentsByActor: context.inputs.includeCommentsByActor,
     excludeCommentsByActor: context.inputs.excludeCommentsByActor,
   });
+
+  // Localisation bug issues must NOT have changes/commits forced on them:
+  // making no change (or only a scoped template.json + source change the agent
+  // commits itself) is the correct outcome. Signal the base-action Stop hook and
+  // the branch-cleanup auto-commit to stand down for this run. Set before
+  // setupClaudeCodeSettings() and branch cleanup, which read this env var.
+  const bugWorkflow = classifyBugWorkflow({
+    isIssuesEvent: context.eventName === "issues",
+    title: githubData.contextData?.title ?? "",
+    labels: (githubData.contextData?.labels?.nodes ?? []).map(
+      (l) => l?.name ?? "",
+    ),
+  });
+  if (bugWorkflow === "localisation") {
+    process.env.CLAUDE_SKIP_FORCED_CHANGES = "true";
+    console.log(
+      "Localisation bug detected — disabling forced-change Stop hook and auto-commit (CLAUDE_SKIP_FORCED_CHANGES=true)",
+    );
+  }
 
   // Setup branch
   const branchInfo = await setupBranch(octokit, githubData, context);

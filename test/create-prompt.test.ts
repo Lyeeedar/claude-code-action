@@ -3,6 +3,8 @@
 import { describe, test, expect, beforeAll } from "bun:test";
 import {
   generatePrompt,
+  generateBugWorkflowInstructions,
+  classifyBugWorkflow,
   getEventTypeAndContext,
   buildAllowedToolsString,
   buildDisallowedToolsString,
@@ -10,6 +12,7 @@ import {
 } from "../src/create-prompt";
 import type { PreparedContext } from "../src/create-prompt";
 import { createMockContext } from "./mockContext";
+import type { FetchDataResult } from "../src/github/data/fetcher";
 
 beforeAll(() => {
   process.env.GITHUB_ACTION_PATH = "/test/action/path";
@@ -1379,5 +1382,158 @@ describe("prepareContext validation errors", () => {
     expect(() => prepareContext(context, commentId)).toThrow(
       "CLAUDE_BRANCH is required for issue_comment event",
     );
+  });
+});
+
+describe("generateBugWorkflowInstructions", () => {
+  const issueContext = (): PreparedContext => ({
+    repository: "owner/repo",
+    claudeCommentId: "12345",
+    triggerPhrase: "@agent",
+    eventData: {
+      eventName: "issues",
+      eventAction: "assigned",
+      isPR: false,
+      issueNumber: "42",
+      baseBranch: "main",
+      claudeBranch: "agent/issue-42",
+      assigneeTrigger: "afnm-agent[bot]",
+    },
+  });
+
+  const dataWith = (title: string, labels: string[]): FetchDataResult =>
+    ({
+      contextData: {
+        title,
+        labels: { nodes: labels.map((name) => ({ name })) },
+      },
+    }) as unknown as FetchDataResult;
+
+  test("returns empty string when the issue has no bug label", () => {
+    const result = generateBugWorkflowInstructions(
+      issueContext(),
+      dataWith("Something is broken", ["enhancement"]),
+    );
+    expect(result).toBe("");
+  });
+
+  test("returns the test-driven workflow for a non-localisation bug", () => {
+    const result = generateBugWorkflowInstructions(
+      issueContext(),
+      dataWith("Crash when opening menu", ["bug"]),
+    );
+    expect(result).toContain("<test_driven_bug_workflow>");
+    expect(result).toContain("REPRODUCE WITH A FAILING TEST FIRST");
+    expect(result).toContain("do NOT finalise the PR");
+    expect(result).not.toContain("<localisation_bug_workflow>");
+  });
+
+  test("returns the localisation workflow when the title mentions localisation", () => {
+    const result = generateBugWorkflowInstructions(
+      issueContext(),
+      dataWith("Missing localisation for combat log", ["bug"]),
+    );
+    expect(result).toContain("<localisation_bug_workflow>");
+    expect(result).toContain("template.json");
+    // Localisation issues must never force a change or an auto-commit, and must
+    // never sweep in the other per-language translation files.
+    expect(result).toContain("will NOT auto-commit for you");
+    expect(result).toContain("NEVER use `git add -A`");
+    expect(result).toContain("other per-language translation files");
+    expect(result).not.toContain("<test_driven_bug_workflow>");
+  });
+
+  test("localisation detection is case-insensitive and matches both spellings", () => {
+    expect(
+      generateBugWorkflowInstructions(
+        issueContext(),
+        dataWith("LOCALISATION broken", ["bug"]),
+      ),
+    ).toContain("<localisation_bug_workflow>");
+    expect(
+      generateBugWorkflowInstructions(
+        issueContext(),
+        dataWith("Localization typo", ["Bug"]),
+      ),
+    ).toContain("<localisation_bug_workflow>");
+  });
+
+  test("bug label match is case-insensitive", () => {
+    const result = generateBugWorkflowInstructions(
+      issueContext(),
+      dataWith("Broken thing", ["BUG"]),
+    );
+    expect(result).toContain("<test_driven_bug_workflow>");
+  });
+
+  test("returns empty string for PR events even with a bug label", () => {
+    const prContext: PreparedContext = {
+      repository: "owner/repo",
+      claudeCommentId: "12345",
+      triggerPhrase: "@agent",
+      eventData: {
+        eventName: "pull_request",
+        eventAction: "opened",
+        isPR: true,
+        prNumber: "7",
+        claudeBranch: "agent/pr-7",
+        baseBranch: "main",
+      },
+    };
+    const result = generateBugWorkflowInstructions(
+      prContext,
+      dataWith("Fix bug", ["bug"]),
+    );
+    expect(result).toBe("");
+  });
+});
+
+describe("classifyBugWorkflow", () => {
+  test("returns null for non-issue events", () => {
+    expect(
+      classifyBugWorkflow({
+        isIssuesEvent: false,
+        title: "localisation bug",
+        labels: ["bug"],
+      }),
+    ).toBeNull();
+  });
+
+  test("returns null when the bug label is absent", () => {
+    expect(
+      classifyBugWorkflow({
+        isIssuesEvent: true,
+        title: "localisation bug",
+        labels: ["enhancement"],
+      }),
+    ).toBeNull();
+  });
+
+  test("returns 'localisation' for a bug whose title mentions localisation", () => {
+    expect(
+      classifyBugWorkflow({
+        isIssuesEvent: true,
+        title: "Missing LOCALISATION for shop",
+        labels: ["Bug"],
+      }),
+    ).toBe("localisation");
+    // American spelling too.
+    expect(
+      classifyBugWorkflow({
+        isIssuesEvent: true,
+        title: "localization typo",
+        labels: ["bug"],
+      }),
+    ).toBe("localisation");
+  });
+
+  test("returns 'test-driven' for a non-localisation bug", () => {
+    expect(
+      classifyBugWorkflow({
+        isIssuesEvent: true,
+        title: "Crash on save",
+        labels: ["bug"],
+      }),
+    ).toBe("test-driven");
   });
 });

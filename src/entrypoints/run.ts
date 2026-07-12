@@ -727,7 +727,15 @@ async function run() {
       try {
         const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
         const status = execSync("git status --porcelain", { cwd: workspace, encoding: "utf-8" }).trim();
-        if (status) {
+        if (status && process.env.CLAUDE_SKIP_FORCED_CHANGES === "true") {
+          // Localisation bug issues opt out of the blanket `git add -A` commit —
+          // it would sweep in regenerated per-language translation files. Any
+          // scoped commit the agent made itself is still pushed below; leftover
+          // uncommitted changes are intentionally left behind, not force-committed.
+          console.log(
+            "CLAUDE_SKIP_FORCED_CHANGES=true — not force-committing uncommitted changes; pushing only the agent's own commits",
+          );
+        } else if (status) {
           console.log("Staging and committing uncommitted changes left by Claude...");
           execSync("git add -A", { cwd: workspace, stdio: "inherit" });
           execSync(`git commit -m "chore: apply remaining changes from Claude session"`, { cwd: workspace, stdio: "inherit" });

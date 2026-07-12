@@ -463,6 +463,122 @@ function getCommitInstructions(
   }
 }
 
+export type BugWorkflow = "localisation" | "test-driven" | null;
+
+/**
+ * Classifies which bug-fixing workflow (if any) applies to an event.
+ *
+ * The workflow only applies to the "work the issue" events (assigned / labeled /
+ * opened) — PR events and plain issue comments are excluded. Among bug-labelled
+ * issues, a title mentioning localisation routes to the localisation flow;
+ * everything else routes to the test-driven flow.
+ *
+ * Kept as a standalone helper so both the prompt generator and the runtime
+ * (which sets CLAUDE_SKIP_FORCED_CHANGES for localisation issues) agree on the
+ * classification.
+ */
+export function classifyBugWorkflow(params: {
+  isIssuesEvent: boolean;
+  title: string;
+  labels: string[];
+}): BugWorkflow {
+  if (!params.isIssuesEvent) {
+    return null;
+  }
+  const hasBugLabel = params.labels.some((l) => l?.toLowerCase() === "bug");
+  if (!hasBugLabel) {
+    return null;
+  }
+  // Accept both British ("localisation") and American ("localization") spelling.
+  return /locali[sz]ation/i.test(params.title) ? "localisation" : "test-driven";
+}
+
+/**
+ * Builds an extra instruction block for bug-labelled issues.
+ *
+ * When an issue carries the "bug" label we override the generic "just implement
+ * changes" guidance with a stricter, smarter workflow:
+ *  - Localisation bugs (title contains "localisation"/"localization") get the
+ *    template.json / extractor flow. The runtime disables the forced-change Stop
+ *    hook and the forced auto-commit for these issues (see CLAUDE_SKIP_FORCED_CHANGES),
+ *    so making no change / no commit is a valid outcome and nothing invalid gets
+ *    swept into a commit.
+ *  - Every other bug gets a test-driven flow: write a failing reproducing test
+ *    first, then fix, then prove the suite is green before finishing.
+ *
+ * Returns an empty string when the workflow does not apply (non-issue events,
+ * or issues without the "bug" label), so it can be appended unconditionally.
+ *
+ * @internal
+ */
+export function generateBugWorkflowInstructions(
+  context: PreparedContext,
+  githubData: FetchDataResult,
+): string {
+  const workflow = classifyBugWorkflow({
+    isIssuesEvent: context.eventData.eventName === "issues",
+    title: githubData.contextData?.title ?? "",
+    labels: (githubData.contextData?.labels?.nodes ?? []).map(
+      (l) => l?.name ?? "",
+    ),
+  });
+
+  if (workflow === null) {
+    return "";
+  }
+
+  if (workflow === "localisation") {
+    return `
+
+<localisation_bug_workflow>
+⚠️ FLAGGED: This bug is a LOCALISATION issue — its title contains "localisation". Handle it with the specialised workflow below, which OVERRIDES the generic "always implement changes" guidance. For localisation issues, making NO code change is a perfectly valid outcome — the system will NOT force a change and will NOT auto-commit for you, so nothing invalid gets pushed. You are responsible for making only the right, minimal change (if any) and, if you do change something, committing exactly the right files yourself. Do NOT invent a change just to have something to push; a wrong extractor edit or a regenerated translation file is worse than no change. Start by updating your GitHub comment to state clearly that this has been flagged and is being handled as a localisation issue.
+
+Follow these steps in order:
+
+1. Identify the exact user-facing string that the issue reports as not localised.
+
+2. Search \`template.json\` (the translation template that holds every extracted string) for that string.
+   - IF the string IS already present in \`template.json\`:
+     - Do NOT change any code — the string is already extracted, it simply has not been translated into the other languages yet.
+     - Update your GitHub comment to explain that the string is already in \`template.json\` but has not yet been translated, so no code change is required. Make no commit, and STOP.
+   - IF the string is MISSING from \`template.json\`:
+     - The extractor is not picking this string up. Locate the string extractor in the source and augment it so this string gets extracted, then re-run the extractor so the string appears in \`template.json\`.
+     - If you are not confident the extractor change is correct, do NOT guess — describe the needed change in your GitHub comment and make no commit.
+
+3. Commit ONLY if you made a valid extractor fix, and if so stage ONLY:
+   - \`template.json\`, and
+   - the source file(s) you changed.
+   ⚠️ Stage each file explicitly by path (e.g. \`git add template.json <source file>\`). NEVER use \`git add -A\`, \`git add .\`, or \`git commit -a\`, and NEVER commit any of the other per-language translation files (the localised copies) — re-running the extractor may have rewritten them, but they must stay out of the commit. Run \`git status\` before committing and unstage anything that is not \`template.json\` or your source change.
+</localisation_bug_workflow>`;
+  }
+
+  return `
+
+<test_driven_bug_workflow>
+⚠️ This issue is labelled "bug". You MUST fix it test-first, in the exact order below. This OVERRIDES the generic "implement changes" guidance. Do NOT jump straight to a fix.
+
+1. REPRODUCE WITH A FAILING TEST FIRST:
+   - Before touching any production code, write a NEW test that reproduces the bug described in the issue.
+   - Run that test and confirm it FAILS for the reason the issue describes (a red test that proves the bug exists).
+   - Update your GitHub comment with the name of the test you added and its current state, e.g. "Reproducing test \`<test name>\` added — currently failing as expected ❌".
+   - Do NOT start fixing until you have a failing test that reproduces the bug.
+
+2. FIX THE BUG:
+   - Only once the reproducing test fails, change the production code to fix it.
+   - Do NOT weaken or delete the reproducing test to force it green — the fix must make the unmodified test pass.
+
+3. VERIFY GREEN BEFORE FINISHING:
+   - Run the relevant test suite (at minimum your new test plus related tests).
+   - Confirm the reproducing test now PASSES and that you have not broken any other tests.
+   - Update your GitHub comment with the final test state, e.g. "\`<test name>\` — now passing ✅".
+
+HARD REQUIREMENTS — do NOT end the session, and do NOT finalise the PR, if either of these is true:
+   - there is no test that reproduces the bug, or
+   - any relevant test is still failing (red).
+If you cannot get the tests green, keep working. Only stop once the reproducing test exists and all relevant tests pass.
+</test_driven_bug_workflow>`;
+}
+
 export function generatePrompt(
   context: PreparedContext,
   githubData: FetchDataResult,
@@ -480,6 +596,8 @@ export function generatePrompt(
     useCommitSigning,
   );
 
+  const bugWorkflow = generateBugWorkflowInstructions(context, githubData);
+
   if (context.githubContext?.inputs?.prompt) {
     return (
       defaultPrompt +
@@ -487,11 +605,12 @@ export function generatePrompt(
 
 <custom_instructions>
 ${context.githubContext.inputs.prompt}
-</custom_instructions>`
+</custom_instructions>` +
+      bugWorkflow
     );
   }
 
-  return defaultPrompt;
+  return defaultPrompt + bugWorkflow;
 }
 
 /**

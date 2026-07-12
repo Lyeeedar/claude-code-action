@@ -147,4 +147,46 @@ describe("setupClaudeCodeSettings", () => {
     expect(settings.newKey).toBe("newValue");
     expect(settings.model).toBe("claude-opus-4-1-20250805");
   });
+
+  describe("forced-edits Stop hook", () => {
+    const ENFORCE_MARKER = "You have not made any code changes";
+    let prevMode: string | undefined;
+    let prevSkip: string | undefined;
+
+    beforeEach(() => {
+      prevMode = process.env.CLAUDE_MODE;
+      prevSkip = process.env.CLAUDE_SKIP_FORCED_CHANGES;
+      delete process.env.CLAUDE_MODE;
+      delete process.env.CLAUDE_SKIP_FORCED_CHANGES;
+    });
+
+    afterEach(() => {
+      if (prevMode === undefined) delete process.env.CLAUDE_MODE;
+      else process.env.CLAUDE_MODE = prevMode;
+      if (prevSkip === undefined) delete process.env.CLAUDE_SKIP_FORCED_CHANGES;
+      else process.env.CLAUDE_SKIP_FORCED_CHANGES = prevSkip;
+    });
+
+    const stopCommands = async (): Promise<string[]> => {
+      const settings = JSON.parse(await readFile(settingsPath, "utf-8"));
+      return ((settings.hooks?.Stop ?? []) as any[])
+        .flatMap((h) => h.hooks ?? [])
+        .map((h) => h.command as string);
+    };
+
+    test("is injected by default", async () => {
+      await setupClaudeCodeSettings(undefined, testHomeDir);
+      const commands = await stopCommands();
+      expect(commands.some((c) => c.includes(ENFORCE_MARKER))).toBe(true);
+    });
+
+    test("is skipped when CLAUDE_SKIP_FORCED_CHANGES=true, other Stop hooks remain", async () => {
+      process.env.CLAUDE_SKIP_FORCED_CHANGES = "true";
+      await setupClaudeCodeSettings(undefined, testHomeDir);
+      const commands = await stopCommands();
+      expect(commands.some((c) => c.includes(ENFORCE_MARKER))).toBe(false);
+      // The lint and tracking-comment Stop hooks are still present.
+      expect(commands.length).toBeGreaterThan(0);
+    });
+  });
 });

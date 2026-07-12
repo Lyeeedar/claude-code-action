@@ -68,9 +68,14 @@ export async function setupClaudeCodeSettings(
   settings.teammateMode = "in-process";
   console.log(`Set teammateMode: in-process`);
 
-  // Enforce that Claude always makes changes — except in schedule mode where read-only runs are valid.
+  // Enforce that Claude always makes changes — except in schedule mode where read-only runs are valid,
+  // and except when CLAUDE_SKIP_FORCED_CHANGES is set (e.g. localisation bug issues, where making no
+  // change is a legitimate outcome and forcing one produces invalid edits).
   // Checks uncommitted changes, unpushed commits, and whether HEAD moved since the session started.
-  if (process.env.CLAUDE_MODE !== "schedule") {
+  if (
+    process.env.CLAUDE_MODE !== "schedule" &&
+    process.env.CLAUDE_SKIP_FORCED_CHANGES !== "true"
+  ) {
     const command =
       `python3 -c "import subprocess,json,os\n` +
       `g=subprocess.run(['git','status','--porcelain'],capture_output=True,text=True)\n` +
@@ -87,6 +92,10 @@ export async function setupClaudeCodeSettings(
     hooks.Stop = [...(hooks.Stop ?? []), stopHook];
     settings.hooks = hooks;
     console.log(`Injected Stop hook to enforce edits (mode: ${process.env.CLAUDE_MODE})`);
+  } else if (process.env.CLAUDE_SKIP_FORCED_CHANGES === "true") {
+    console.log(
+      "Skipping forced-edits Stop hook (CLAUDE_SKIP_FORCED_CHANGES=true) — no change is a valid outcome",
+    );
   }
 
   // Inject a Stop hook that runs `npm run lint` and blocks if it fails.

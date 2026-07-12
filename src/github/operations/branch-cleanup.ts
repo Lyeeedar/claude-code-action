@@ -104,7 +104,17 @@ export async function checkAndCommitOrDeleteBranch(
             const hasUncommittedChanges =
               gitStatus.stdout.toString().trim().length > 0;
 
-            if (hasUncommittedChanges) {
+            if (hasUncommittedChanges && process.env.CLAUDE_SKIP_FORCED_CHANGES === "true") {
+              // Localisation bug issues (and any run that opts out) must not have
+              // a blanket `git add -A` commit forced on them — that would sweep in
+              // regenerated per-language translation files. The agent is expected
+              // to commit its own scoped change; anything left uncommitted here is
+              // intentionally dropped rather than force-committed.
+              console.log(
+                "CLAUDE_SKIP_FORCED_CHANGES=true — skipping forced auto-commit of uncommitted changes",
+              );
+              shouldDeleteBranch = true;
+            } else if (hasUncommittedChanges) {
               console.log("Found uncommitted changes, committing them...");
 
               // Add all changes, minus anything restored from the base branch
