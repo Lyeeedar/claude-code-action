@@ -1425,6 +1425,9 @@ describe("generateBugWorkflowInstructions", () => {
     expect(result).toContain("<test_driven_bug_workflow>");
     expect(result).toContain("REPRODUCE WITH A FAILING TEST FIRST");
     expect(result).toContain("do NOT finalise the PR");
+    // Wording/typo fixes skip the test and keep the diff minimal.
+    expect(result).toContain("wording change or a typo");
+    expect(result).toContain("make NO OTHER CHANGES");
     expect(result).not.toContain("<localisation_bug_workflow>");
   });
 

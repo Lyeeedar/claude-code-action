@@ -555,7 +555,11 @@ Follow these steps in order:
   return `
 
 <test_driven_bug_workflow>
-⚠️ This issue is labelled "bug". You MUST fix it test-first, in the exact order below. This OVERRIDES the generic "implement changes" guidance. Do NOT jump straight to a fix.
+⚠️ This issue is labelled "bug". Before anything else, judge whether the fix is a pure wording change or a typo (e.g. fixing a misspelling, a piece of display text, a message string, or a comment) that does NOT change behaviour or logic.
+   - IF it is a wording change or typo: do NOT write a test. Just change the indicated line and make NO OTHER CHANGES — no refactors, no extra fixes, no reformatting of surrounding code. We want these to be PRs with the smallest possible diff. Then commit and finish; skip the rest of this workflow.
+   - OTHERWISE (any behavioural/logic bug): fix it test-first, in the exact order below.
+
+This OVERRIDES the generic "implement changes" guidance. Do NOT jump straight to a fix.
 
 1. REPRODUCE WITH A FAILING TEST FIRST:
    - Before touching any production code, write a NEW test that reproduces the bug described in the issue.
