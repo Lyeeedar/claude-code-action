@@ -94,6 +94,75 @@ async function ensureUv(): Promise<void> {
   console.log("uv installed successfully");
 }
 
+/**
+ * Install the workspace's npm dependencies before Claude starts.
+ *
+ * Without this, agents hit `npm run lint` (injected as a Stop hook) with no
+ * node_modules and report "npm ci requires sandbox approval" instead of
+ * actually linting. Running it here — outside the agent's sandbox — means the
+ * deps are already there by the time the hook fires.
+ *
+ * No-ops when the workspace isn't an npm project or node_modules already
+ * exists. Never fatal: a failed install just means the hook falls back to its
+ * own install attempt.
+ */
+async function ensureWorkspaceNodeModules(workspace: string): Promise<void> {
+  if (!existsSync(`${workspace}/package.json`)) {
+    console.log("[npm-install] No package.json in workspace — skipping");
+    return;
+  }
+  if (existsSync(`${workspace}/node_modules`)) {
+    console.log("[npm-install] node_modules already present — skipping");
+    return;
+  }
+
+  // `npm ci` needs a lockfile in sync with package.json; fall back to install.
+  const hasLockfile = existsSync(`${workspace}/package-lock.json`);
+  const args = hasLockfile
+    ? ["ci", "--no-audit", "--no-fund"]
+    : ["install", "--no-audit", "--no-fund", "--prefer-offline"];
+
+  console.log(`[npm-install] Running npm ${args.join(" ")} in ${workspace}...`);
+  const start = Date.now();
+  const code = await new Promise<number | null>((resolve) => {
+    const child = spawn("npm", args, { stdio: "inherit", cwd: workspace });
+    child.on("close", resolve);
+    child.on("error", (err) => {
+      console.warn(`[npm-install] Failed to spawn npm (non-fatal): ${err}`);
+      resolve(null);
+    });
+  });
+  const secs = Math.round((Date.now() - start) / 1000);
+
+  if (code === 0) {
+    console.log(`[npm-install] Dependencies installed in ${secs}s`);
+  } else if (hasLockfile && code !== null) {
+    // A lockfile out of sync with package.json makes `npm ci` bail — retry loosely.
+    console.warn(
+      `[npm-install] npm ci exited ${code} after ${secs}s — retrying with npm install`,
+    );
+    const fallback = await new Promise<number | null>((resolve) => {
+      const child = spawn(
+        "npm",
+        ["install", "--no-audit", "--no-fund", "--prefer-offline"],
+        { stdio: "inherit", cwd: workspace },
+      );
+      child.on("close", resolve);
+      child.on("error", () => resolve(null));
+    });
+    if (fallback === 0)
+      console.log("[npm-install] Dependencies installed via npm install");
+    else
+      console.warn(
+        `[npm-install] npm install also failed (exit ${fallback}) — continuing anyway`,
+      );
+  } else {
+    console.warn(
+      `[npm-install] npm exited ${code} after ${secs}s (non-fatal) — continuing anyway`,
+    );
+  }
+}
+
 const WIP_MARKER = "<!-- claude-wip-section -->";
 
 /**
@@ -563,9 +632,13 @@ async function run() {
       ? `${prepareResult.claudeArgs || ""} --resume ${priorSessionId}`.trim()
       : prepareResult.claudeArgs;
 
+    const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
+
+    // Install workspace deps up front so the lint Stop hook has node_modules.
+    await ensureWorkspaceNodeModules(workspace);
+
     // Restore persisted memory files so the memsearch plugin can find them.
     // The plugin's hooks handle indexing, search injection, and saving new memories.
-    const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
     try {
       await restoreMemoryFiles(workspace);
     } catch (err) {
