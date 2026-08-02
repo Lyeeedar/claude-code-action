@@ -1,5 +1,7 @@
 .DS_Store
 node_modules
+# Removed from this fork (see 1a31b49); base-action/bun.lock is still tracked.
+/bun.lock
 
 **/.claude/settings.local.json
 .code-graph/

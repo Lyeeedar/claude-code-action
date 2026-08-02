@@ -64,7 +64,7 @@ export type LinkedIssue = {
   number: number;
   title: string;
   body: string;
-  author: GitHubAuthor;
+  author: GitHubAuthor | null;
   createdAt: string;
   updatedAt?: string;
   lastEditedAt?: string;
@@ -78,7 +78,7 @@ export type LinkedPullRequest = {
   number: number;
   title: string;
   body: string;
-  author: GitHubAuthor;
+  author: GitHubAuthor | null;
   state: string;
   baseRefName: string;
   headRefName: string;

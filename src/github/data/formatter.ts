@@ -162,7 +162,7 @@ export function formatLinkedIssues(
       const body = formatBody(issue.body || "", imageUrlMap ?? new Map());
       const comments = formatComments(issue.comments.nodes, imageUrlMap);
       let out = `### Linked Issue #${issue.number}: ${sanitizeContent(issue.title)}
-Author: ${issue.author.login} | State: ${issue.state}
+Author: ${issue.author?.login ?? "ghost"} | State: ${issue.state}
 
 ${body}`;
       if (comments) out += `\n\n**Comments:**\n${comments}`;
@@ -181,7 +181,7 @@ export function formatLinkedPullRequests(
       const body = formatBody(pr.body || "", imageUrlMap ?? new Map());
       const comments = formatComments(pr.comments.nodes, imageUrlMap);
       let out = `### Linked PR #${pr.number}: ${sanitizeContent(pr.title)}
-Author: ${pr.author.login} | State: ${pr.state} | Branch: ${pr.headRefName} -> ${pr.baseRefName}
+Author: ${pr.author?.login ?? "ghost"} | State: ${pr.state} | Branch: ${pr.headRefName} -> ${pr.baseRefName}
 
 ${body}`;
       if (comments) out += `\n\n**Comments:**\n${comments}`;
