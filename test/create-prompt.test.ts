@@ -1428,6 +1428,15 @@ describe("generateBugWorkflowInstructions", () => {
     // Wording/typo fixes skip the test and keep the diff minimal.
     expect(result).toContain("wording change or a typo");
     expect(result).toContain("make NO OTHER CHANGES");
+    // The reproducing test must exercise real behaviour, not read source / assert a tautology.
+    expect(result).toContain("MUST exercise real behaviour");
+    expect(result).toContain("FORBIDDEN");
+    expect(result).toContain(
+      "would still pass if the buggy code were completely deleted",
+    );
+    // There is a documented escape hatch when the functionality genuinely can't be tested.
+    expect(result).toContain("Why no test");
+    expect(result).toContain("genuinely cannot be tested");
     expect(result).not.toContain("<localisation_bug_workflow>");
   });
 

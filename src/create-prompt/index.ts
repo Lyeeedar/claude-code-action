@@ -563,13 +563,20 @@ This OVERRIDES the generic "implement changes" guidance. Do NOT jump straight to
 
 1. REPRODUCE WITH A FAILING TEST FIRST:
    - Before touching any production code, write a NEW test that reproduces the bug described in the issue.
+   - The test MUST exercise real behaviour: call the actual function/method/component involved and assert on the value it returns or the effect it produces. A valid reproducing test is one that FAILS today and PASSES only because of your fix.
+   - FORBIDDEN — these are NOT tests, and writing one is a failure of this task:
+     - reading a source file (or the test file itself) and asserting its text/AST contains or equals some code;
+     - asserting a literal against itself or against a copy of the implementation (e.g. \`expect("Hello").toBe("Hello")\`, or re-deriving the expected value with the same code the implementation uses);
+     - tests with no meaningful assertion, or that would still pass if the buggy code were completely deleted or left unfixed.
+   - Sanity check before continuing: if this test would pass against the CURRENT (buggy) code, or would pass with the implementation gutted, it does not reproduce anything — delete it and write a real one that fails for the reason the issue describes.
    - Run that test and confirm it FAILS for the reason the issue describes (a red test that proves the bug exists).
    - Update your GitHub comment with the name of the test you added and its current state, e.g. "Reproducing test \`<test name>\` added — currently failing as expected ❌".
-   - Do NOT start fixing until you have a failing test that reproduces the bug.
+   - Do NOT start fixing until you have a genuine, behaviour-exercising test that fails because of the bug.
+   - OUT — only if the functionality genuinely cannot be tested: some bugs cannot be exercised by an automated test in this repo (e.g. purely visual/rendering output, hardware or platform-specific behaviour, or a flow with no seam the test harness can reach). If, after a real attempt, that is the case, you may skip the test — but you MUST update your GitHub comment with a short section titled "Why no test" explaining the specific technical reason it cannot be tested and how you verified the fix instead. Do NOT use this to avoid effort: "it was hard" or "I couldn't find where to put it" is NOT a valid reason, and a bug in ordinary logic/data code almost always CAN be tested.
 
 2. FIX THE BUG:
    - Only once the reproducing test fails, change the production code to fix it.
-   - Do NOT weaken or delete the reproducing test to force it green — the fix must make the unmodified test pass.
+   - Do NOT weaken or delete the reproducing test to force it green, and do NOT edit the test to match the buggy output — the fix must make the unmodified test pass by changing the PRODUCTION code.
 
 3. VERIFY GREEN BEFORE FINISHING:
    - Run the relevant test suite (at minimum your new test plus related tests).
@@ -577,9 +584,9 @@ This OVERRIDES the generic "implement changes" guidance. Do NOT jump straight to
    - Update your GitHub comment with the final test state, e.g. "\`<test name>\` — now passing ✅".
 
 HARD REQUIREMENTS — do NOT end the session, and do NOT finalise the PR, if either of these is true:
-   - there is no test that reproduces the bug, or
+   - there is no test that reproduces the bug AND you have not documented a valid "Why no test" reason (see the OUT in step 1), or
    - any relevant test is still failing (red).
-If you cannot get the tests green, keep working. Only stop once the reproducing test exists and all relevant tests pass.
+If you cannot get the tests green, keep working. Only stop once EITHER a genuine reproducing test exists and all relevant tests pass, OR you have documented why the functionality genuinely cannot be tested and verified the fix another way.
 </test_driven_bug_workflow>`;
 }
 
