@@ -639,8 +639,8 @@ function generateSimplePrompt(
     changedFilesWithSHA,
     reviewData,
     imageUrlMap,
-    linkedIssues,
-    linkedPullRequests,
+    linkedIssues = [],
+    linkedPullRequests = [],
   } = githubData;
   const { eventData } = context;
 
@@ -782,8 +782,8 @@ export function generateDefaultPrompt(
     changedFilesWithSHA,
     reviewData,
     imageUrlMap,
-    linkedIssues,
-    linkedPullRequests,
+    linkedIssues = [],
+    linkedPullRequests = [],
   } = githubData;
   const { eventData } = context;
 

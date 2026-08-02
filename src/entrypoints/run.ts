@@ -632,6 +632,15 @@ async function run() {
       ? `${prepareResult.claudeArgs || ""} --resume ${priorSessionId}`.trim()
       : prepareResult.claudeArgs;
 
+    // Force Auto permission mode for every mode (tag / agent / schedule) and
+    // regardless of what the caller passed in `claude_args`. Appending is what
+    // makes this authoritative: `permission-mode` is not an accumulating flag,
+    // so parseClaudeArgsToExtraArgs keeps the LAST occurrence, and user args are
+    // already appended before this point. Teammates run in-process and inherit
+    // the session's mode, so this covers them too.
+    const claudeArgsWithMode =
+      `${claudeArgsWithResume || ""} --permission-mode auto`.trim();
+
     const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
 
     // Install workspace deps up front so the lint Stop hook has node_modules.
@@ -689,7 +698,7 @@ async function run() {
     const AGENT_TIMEOUT_MS = 40 * 60 * 1000;
     const claudeResult: ClaudeRunResult = await Promise.race([
       runClaude(promptConfig.path, {
-        claudeArgs: claudeArgsWithResume,
+        claudeArgs: claudeArgsWithMode,
         appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote || undefined,
         model: process.env.ANTHROPIC_MODEL,
         pathToClaudeCodeExecutable: claudeExecutable,

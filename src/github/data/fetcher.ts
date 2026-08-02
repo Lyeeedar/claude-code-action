@@ -389,8 +389,11 @@ export type FetchDataResult = {
   reviewData: { nodes: GitHubReview[] } | null;
   imageUrlMap: Map<string, string>;
   triggerDisplayName?: string | null;
-  linkedIssues: LinkedIssue[];
-  linkedPullRequests: LinkedPullRequest[];
+  // Optional so fixtures (including upstream's, which don't know about these
+  // fork-only fields) can build a FetchDataResult without them. fetchGitHubData
+  // always populates both; consumers default to [].
+  linkedIssues?: LinkedIssue[];
+  linkedPullRequests?: LinkedPullRequest[];
 };
 
 export async function fetchGitHubData({

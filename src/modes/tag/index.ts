@@ -275,10 +275,11 @@ export async function prepareTagMode({
   const escapedOurConfig = ourMcpConfig.replace(/'/g, "'\\''");
   claudeArgs = `--mcp-config '${escapedOurConfig}'`;
 
-  // Add required tools for tag mode.
-  // acceptEdits: file edits auto-allowed inside cwd ($GITHUB_WORKSPACE), denied outside.
-  // Headless SDK has no prompt handler, so anything that falls through to "ask" is denied.
-  claudeArgs += ` --permission-mode acceptEdits --allowedTools "${tagModeTools.join(",")}"`;
+  // Add required tools for tag mode. The permission mode is not set here — run.ts
+  // forces `--permission-mode auto` for every mode after user args are appended.
+  // Note the headless SDK has no prompt handler, so whatever Auto's safety check
+  // routes to "ask" is denied rather than prompted.
+  claudeArgs += ` --allowedTools "${tagModeTools.join(",")}"`;
 
   // Append user's claude_args (which may have more --mcp-config flags)
   if (userClaudeArgs) {
