@@ -162,7 +162,6 @@ export async function prepareTagMode({
     // burning tokens on work that will be lost when the runner exits.
     let pushed = false;
     let lastPushError = "";
-    let deepened = false;
     for (let attempt = 1; attempt <= 3 && !pushed; attempt++) {
       try {
         await $`git push -u origin ${branchInfo.claudeBranch}`.quiet();
@@ -172,20 +171,6 @@ export async function prepareTagMode({
         if (attempt < 3) {
           // Surface git's stderr — without it "exit code 1" is undiagnosable.
           console.log(`Push attempt ${attempt} failed: ${lastPushError}`);
-          // A shallow clone cannot push a branch whose tip the remote does not
-          // already have: git sends the shallow boundary and GitHub rejects it.
-          // Deepening to full history makes the push self-contained.
-          if (!deepened && /shallow/i.test(lastPushError)) {
-            deepened = true;
-            try {
-              console.log("Deepening shallow clone before retrying push...");
-              await $`git fetch --unshallow origin`.quiet();
-            } catch (deepenErr) {
-              console.log(
-                `Could not deepen clone: ${describeShellError(deepenErr)}`,
-              );
-            }
-          }
           console.log("Retrying in 3s...");
           await new Promise((r) => setTimeout(r, 3000));
         }
