@@ -211,7 +211,9 @@ export async function setupBranch(
         // Using execFileSync instead of shell template literals for security
         execGit(["fetch", "origin", ...depthArgs, branchName]);
       }
-      execGit(["checkout", branchName, "--"]);
+      // Reset to the tip we just fetched rather than checking out a local ref
+      // that may still point at an older SHA (see the FETCH_HEAD note below).
+      execGit(["checkout", "-B", branchName, "FETCH_HEAD"]);
 
       console.log(`Successfully checked out PR branch for PR #${entityNumber}`);
 
@@ -307,11 +309,13 @@ export async function setupBranch(
         `Branch name generated: ${newBranch} (will be created by file ops server on first commit)`,
       );
 
-      // Ensure we're on the source branch
+      // Ensure we're on the source branch, at the tip we just fetched.
+      // See the note below on FETCH_HEAD: a plain `git checkout <branch>` would
+      // keep the stale local ref left behind by actions/checkout.
       console.log(`Fetching and checking out source branch: ${sourceBranch}`);
       validateBranchName(sourceBranch);
       execGit(["fetch", "origin", sourceBranch, ...fetchDepthArgs(1)]);
-      execGit(["checkout", sourceBranch, "--"]);
+      execGit(["checkout", "-B", sourceBranch, "FETCH_HEAD"]);
 
       return {
         baseBranch: sourceBranch,
@@ -328,11 +332,18 @@ export async function setupBranch(
     // Fetch and checkout the source branch first to ensure we branch from the correct base
     console.log(`Fetching and checking out source branch: ${sourceBranch}`);
     validateBranchName(sourceBranch);
+    validateBranchName(newBranch);
     execGit(["fetch", "origin", sourceBranch, ...fetchDepthArgs(1)]);
-    execGit(["checkout", sourceBranch, "--"]);
 
-    // Create and checkout the new branch from the source branch
-    execGit(["checkout", "-b", newBranch]);
+    // Branch off FETCH_HEAD (the tip we just fetched), not the local `sourceBranch`
+    // ref. actions/checkout leaves that local ref pinned to the SHA the workflow
+    // started at, which is already stale if anything landed on the source branch
+    // in the meantime — and on a shallow clone git cannot even tell the two apart,
+    // so `git checkout <sourceBranch>` silently keeps the old commit. Branching
+    // from that stale commit gives Claude an out-of-date base and makes the first
+    // push fail with "shallow update not allowed": no remote ref points at it, so
+    // git has to send it as a shallow-boundary commit, which GitHub rejects.
+    execGit(["checkout", "-B", newBranch, "FETCH_HEAD"]);
 
     console.log(
       `Successfully created and checked out local branch: ${newBranch}`,

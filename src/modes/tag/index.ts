@@ -20,6 +20,27 @@ import type { GitHubContext } from "../../github/context";
 import type { Octokits } from "../../github/api/client";
 import { parseAllowedTools } from "../agent/parse-tools";
 import { buildBaseTools } from "../shared-tools";
+import { redactGitHubTokens } from "../../github/utils/sanitizer";
+
+/**
+ * Renders a Bun shell failure with git's stderr attached.
+ *
+ * `$`...`.quiet()` captures stderr on the thrown ShellError instead of printing
+ * it, and the error's own message is only "Failed with exit code N" — useless on
+ * its own for diagnosing a push rejection. git echoes the remote URL on failure,
+ * which carries the auth token, so redact before this reaches the log.
+ */
+function describeShellError(err: unknown): string {
+  const stderr = (err as { stderr?: { toString(): string } })?.stderr
+    ?.toString()
+    .trim();
+  const stdout = (err as { stdout?: { toString(): string } })?.stdout
+    ?.toString()
+    .trim();
+  return redactGitHubTokens(
+    [String(err), stderr, stdout].filter(Boolean).join("\n"),
+  );
+}
 
 /**
  * Prepares the tag mode execution context.
@@ -140,15 +161,32 @@ export async function prepareTagMode({
     // Push with retry — if this fails we abort immediately rather than
     // burning tokens on work that will be lost when the runner exits.
     let pushed = false;
-    let lastPushError: unknown;
+    let lastPushError = "";
+    let deepened = false;
     for (let attempt = 1; attempt <= 3 && !pushed; attempt++) {
       try {
         await $`git push -u origin ${branchInfo.claudeBranch}`.quiet();
         pushed = true;
       } catch (err) {
-        lastPushError = err;
+        lastPushError = describeShellError(err);
         if (attempt < 3) {
-          console.log(`Push attempt ${attempt} failed, retrying in 3s...`);
+          // Surface git's stderr — without it "exit code 1" is undiagnosable.
+          console.log(`Push attempt ${attempt} failed: ${lastPushError}`);
+          // A shallow clone cannot push a branch whose tip the remote does not
+          // already have: git sends the shallow boundary and GitHub rejects it.
+          // Deepening to full history makes the push self-contained.
+          if (!deepened && /shallow/i.test(lastPushError)) {
+            deepened = true;
+            try {
+              console.log("Deepening shallow clone before retrying push...");
+              await $`git fetch --unshallow origin`.quiet();
+            } catch (deepenErr) {
+              console.log(
+                `Could not deepen clone: ${describeShellError(deepenErr)}`,
+              );
+            }
+          }
+          console.log("Retrying in 3s...");
           await new Promise((r) => setTimeout(r, 3000));
         }
       }
@@ -186,12 +224,20 @@ export async function prepareTagMode({
       draftPrUrl = existingPrUrl;
       // Ensure existing PR has [WIP] prefix so it's clear work is ongoing
       try {
-        const prNum = parseInt(existingPrUrl.match(/\/pull\/(\d+)/)?.[1] ?? "0");
+        const prNum = parseInt(
+          existingPrUrl.match(/\/pull\/(\d+)/)?.[1] ?? "0",
+        );
         if (prNum) {
-          const { data: existingPr } = await octokit.rest.pulls.get({ owner, repo, pull_number: prNum });
+          const { data: existingPr } = await octokit.rest.pulls.get({
+            owner,
+            repo,
+            pull_number: prNum,
+          });
           if (!existingPr.title.startsWith("[WIP]")) {
             await octokit.rest.pulls.update({
-              owner, repo, pull_number: prNum,
+              owner,
+              repo,
+              pull_number: prNum,
               title: `[WIP] ${existingPr.title}`,
             });
           }
