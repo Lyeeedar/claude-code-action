@@ -18,6 +18,22 @@ export type ClaudeRunResult = {
   structuredOutput?: string;
 };
 
+/** Running totals emitted as the conversation streams in. */
+export type ClaudeProgress = {
+  messages: number;
+  inputTokens: number;
+  outputTokens: number;
+};
+
+export type ClaudeProgressCallback = (progress: ClaudeProgress) => void;
+
+type MessageUsage = {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+};
+
 /** Filename for the user request file, written by prompt generation */
 const USER_REQUEST_FILENAME = "claude-user-request.txt";
 
@@ -166,6 +182,7 @@ function sanitizeSdkOutput(
 export async function runClaudeWithSdk(
   promptPath: string,
   { sdkOptions, showFullOutput, hasJsonSchema }: ParsedSdkOptions,
+  onProgress?: ClaudeProgressCallback,
 ): Promise<ClaudeRunResult> {
   // Create prompt configuration - may be a string or multi-block message
   const prompt = await createPromptConfig(promptPath, showFullOutput);
@@ -186,10 +203,39 @@ export async function runClaudeWithSdk(
 
   const messages: SDKMessage[] = [];
   let resultMessage: SDKResultMessage | undefined;
+  const progress: ClaudeProgress = {
+    messages: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+  };
 
   try {
     for await (const message of query({ prompt, options: sdkOptions })) {
       messages.push(message);
+
+      if (onProgress) {
+        // Conversation turns only — system/init and the final result aren't
+        // things a reader would count as messages.
+        if (message.type === "assistant" || message.type === "user") {
+          progress.messages++;
+        }
+        if (message.type === "assistant") {
+          const usage = message.message?.usage as MessageUsage | undefined;
+          if (usage) {
+            progress.inputTokens +=
+              (usage.input_tokens ?? 0) +
+              (usage.cache_creation_input_tokens ?? 0) +
+              (usage.cache_read_input_tokens ?? 0);
+            progress.outputTokens += usage.output_tokens ?? 0;
+          }
+        }
+        try {
+          onProgress({ ...progress });
+        } catch (err) {
+          // A broken progress consumer must never take the agent down.
+          console.warn(`Progress callback failed (non-fatal): ${err}`);
+        }
+      }
 
       // Persist session_id immediately on init so it survives a timeout.
       if (message.type === "system" && "subtype" in message && message.subtype === "init" && "session_id" in message && message.session_id) {

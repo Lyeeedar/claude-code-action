@@ -35,6 +35,16 @@ import { restoreConfigFromBase } from "../github/operations/restore-config";
 import { loadSessionState, saveSessionState } from "../github/operations/session-state";
 import { restoreMemoryFiles, saveMemoryStore, updateMemoryIssue } from "../github/operations/memory-store";
 import { validateBranchName } from "../github/operations/branch";
+import {
+  waitForAgentSlot,
+  workflowFileFromRef,
+} from "../github/operations/agent-slot";
+import {
+  AgentStatusReporter,
+  prNumberFromUrl,
+  type AgentProgress,
+} from "../github/operations/pr-status";
+import { redactGitHubTokens } from "../github/utils/sanitizer";
 import { collectActionInputsPresence } from "./collect-inputs";
 import { updateCommentLink } from "./update-comment-link";
 import { formatTurnsFromData } from "./format-turns";
@@ -401,6 +411,15 @@ async function run() {
   const pendingIssueLinks: { prNumber: number; issueNumber: number }[] = [];
   // Track whether we've completed prepare phase, so we can attribute errors correctly
   let prepareCompleted = false;
+  // Live status banner at the top of the PR description.
+  let statusReporter: AgentStatusReporter | undefined;
+  const progress: AgentProgress = {
+    messages: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+  };
+  let agentStartedAt: number | undefined;
+  let runError: string | undefined;
   try {
     // Phase 1: Prepare
     const actionInputsPresent = collectActionInputsPresence();
@@ -497,6 +516,28 @@ async function run() {
       } catch (err) {
         console.warn(`Could not mark PR as in-progress: ${err}`);
       }
+    }
+
+    // The PR exists by now — prepare pushed the branch and opened a draft PR
+    // (or we were triggered on an existing one). Everything from here on
+    // reports its status into that PR's description, so a queued or
+    // interrupted run is visible without opening the Actions tab.
+    const statusPrNumber =
+      isEntityContext(context) && context.isPR
+        ? context.entityNumber
+        : prNumberFromUrl(draftPrUrl);
+    if (statusPrNumber && octokit) {
+      const runId = process.env.GITHUB_RUN_ID;
+      statusReporter = new AgentStatusReporter({
+        octokit,
+        owner: context.repository.owner,
+        repo: context.repository.repo,
+        prNumber: statusPrNumber,
+        jobUrl: runId
+          ? `https://github.com/${context.repository.owner}/${context.repository.repo}/actions/runs/${runId}`
+          : undefined,
+      });
+      statusReporter.start();
     }
 
     // Phase 2: Install uv (needed for minimax MCP)
@@ -695,15 +736,57 @@ async function run() {
       console.warn(`[code-graph] Failed to start indexing (non-fatal): ${err}`);
     }
 
+    // Cap how many agent sessions run at once so parallel runs don't trip
+    // provider rate limits. Deliberately the last thing before Claude starts:
+    // the slot is held only while API quota is actually being consumed, not
+    // during checkout, installs and indexing.
+    const maxParallelAgents = parseInt(
+      process.env.MAX_PARALLEL_AGENTS ?? "",
+      10,
+    );
+    // The workflow's own GITHUB_TOKEN is what reliably carries `actions: read`;
+    // a GitHub App token only does if the App was granted that scope.
+    const slotOctokit = process.env.DEFAULT_WORKFLOW_TOKEN
+      ? createOctokit(process.env.DEFAULT_WORKFLOW_TOKEN)
+      : octokit;
+    if (slotOctokit) {
+      await waitForAgentSlot({
+        octokit: slotOctokit,
+        owner: context.repository.owner,
+        repo: context.repository.repo,
+        runId: Number(process.env.GITHUB_RUN_ID ?? 0),
+        workflowFile: workflowFileFromRef(process.env.GITHUB_WORKFLOW_REF),
+        maxParallel: Number.isFinite(maxParallelAgents) ? maxParallelAgents : 0,
+        onWaiting: ({ ahead, waitedMs }) =>
+          statusReporter?.set({ phase: "waiting", ahead, waitedMs }),
+      });
+    }
+
+    agentStartedAt = Date.now();
+    statusReporter?.set({ phase: "running", ...progress, elapsedMs: 0 });
+
     const AGENT_TIMEOUT_MS = 40 * 60 * 1000;
     const claudeResult: ClaudeRunResult = await Promise.race([
-      runClaude(promptConfig.path, {
-        claudeArgs: claudeArgsWithMode,
-        appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote || undefined,
-        model: process.env.ANTHROPIC_MODEL,
-        pathToClaudeCodeExecutable: claudeExecutable,
-        showFullOutput: process.env.INPUT_SHOW_FULL_OUTPUT,
-      }),
+      runClaude(
+        promptConfig.path,
+        {
+          claudeArgs: claudeArgsWithMode,
+          appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote || undefined,
+          model: process.env.ANTHROPIC_MODEL,
+          pathToClaudeCodeExecutable: claudeExecutable,
+          showFullOutput: process.env.INPUT_SHOW_FULL_OUTPUT,
+        },
+        (p) => {
+          progress.messages = p.messages;
+          progress.inputTokens = p.inputTokens;
+          progress.outputTokens = p.outputTokens;
+          statusReporter?.set({
+            phase: "running",
+            ...progress,
+            elapsedMs: Date.now() - (agentStartedAt ?? Date.now()),
+          });
+        },
+      ),
       new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("Agent 40-minute timeout reached — saving work and exiting")), AGENT_TIMEOUT_MS)
       ),
@@ -794,6 +877,7 @@ async function run() {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     executionFile ??= setExecutionFileOutputIfPresent();
+    runError = errorMessage;
     // Only mark as prepare failure if we haven't completed the prepare phase
     if (!prepareCompleted) {
       prepareSuccess = false;
@@ -891,6 +975,34 @@ async function run() {
         } catch (err) {
           console.warn(`Could not patch PR #${prNumber} with issue link: ${err}`);
         }
+      }
+    }
+
+    // Final status banner. Written after the WIP section is cleared and the
+    // issue link is patched in, so nothing downstream can overwrite it.
+    if (statusReporter) {
+      statusReporter.stop();
+      const elapsedMs = agentStartedAt ? Date.now() - agentStartedAt : 0;
+      statusReporter.set(
+        claudeSuccess
+          ? { phase: "completed", ...progress, elapsedMs }
+          : {
+              phase: "incomplete",
+              ...progress,
+              elapsedMs,
+              // Error text lands in a public PR body — redact any token that
+              // leaked into it, and keep it to a single readable line.
+              reason: runError
+                ? redactGitHubTokens(runError).split("\n")[0]!.slice(0, 300)
+                : agentStartedAt
+                  ? "the run ended before the agent reported completion"
+                  : "the agent never started",
+            },
+      );
+      try {
+        await statusReporter.flush();
+      } catch (err) {
+        console.warn(`Could not write final PR status (non-fatal): ${err}`);
       }
     }
 

@@ -22,8 +22,8 @@ jobs:
       (github.event_name == 'issues' && (contains(github.event.issue.body, '@agent') || contains(github.event.issue.title, '@agent'))) ||
       (github.event_name == 'pull_request_review' && endsWith(github.event.pull_request.user.login, '[bot]') && github.event.review.state != 'approved')
     runs-on: ubuntu-latest
-    # Agent budget (45m) plus the worst-case wait for a free slot (60m).
-    timeout-minutes: 105
+    # Agent budget (45m) plus the worst-case wait for a free agent slot (20m).
+    timeout-minutes: 65
     permissions:
       contents: write
       pull-requests: write
@@ -31,61 +31,6 @@ jobs:
       id-token: write
       actions: read
     steps:
-      # Cap how many agent sessions run at once so parallel runs don't trip
-      # provider rate limits. Runs are admitted strictly oldest-first: this run
-      # proceeds once fewer than AGENT_MAX_PARALLEL older runs of this workflow
-      # are still in progress, otherwise it waits for one of them to finish.
-      - name: Wait for a free agent slot
-        id: slot
-        timeout-minutes: 62
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MAX_PARALLEL: ${{ vars.AGENT_MAX_PARALLEL || '9' }}
-          WORKFLOW_REF: ${{ github.workflow_ref }}
-          WAIT_MINUTES: "60"
-          POLL_SECONDS: "60"
-        run: |
-          set -uo pipefail
-
-          max="${MAX_PARALLEL:-9}"
-          case "$max" in ''|*[!0-9]*) max=9 ;; esac
-          if [ "$max" -le 0 ]; then
-            echo "Concurrency limit disabled (AGENT_MAX_PARALLEL=$max)."
-            exit 0
-          fi
-
-          # "owner/repo/.github/workflows/foo.yml@refs/heads/main" -> "foo.yml"
-          workflow="${WORKFLOW_REF%%@*}"
-          workflow="${workflow##*/}"
-
-          deadline=$(( $(date +%s) + WAIT_MINUTES * 60 ))
-
-          while :; do
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::No agent slot free after ${WAIT_MINUTES}m — giving up. Re-trigger once the queue clears."
-              exit 1
-            fi
-
-            if ! runs=$(gh api --paginate \
-                  "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/runs?status=in_progress&per_page=100" \
-                  --jq '.workflow_runs[].id'); then
-              echo "::warning::Could not list workflow runs — retrying in ${POLL_SECONDS}s"
-              sleep "$POLL_SECONDS"
-              continue
-            fi
-
-            # Run IDs increase monotonically, so a lower ID means an older run.
-            ahead=$(printf '%s\n' "$runs" | awk -v me="$GITHUB_RUN_ID" 'NF && $1+0 < me+0' | wc -l | tr -d ' ')
-
-            if [ "$ahead" -lt "$max" ]; then
-              echo "Slot acquired — $ahead agent run(s) ahead of this one (limit $max)."
-              exit 0
-            fi
-
-            echo "Waiting — $ahead agent run(s) ahead of this one (limit $max). Re-checking in ${POLL_SECONDS}s."
-            sleep "$POLL_SECONDS"
-          done
-
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v1
@@ -122,9 +67,13 @@ jobs:
           label_trigger: "agent"
           auto_fix_pr_reviews: "true"
           bot_name: "afnm-agent[bot]"
-          model_cheap: "minimax/MiniMax-M2.7"
-          model: "minimax/MiniMax-M2.7"
-          model_expensive: "minimax/MiniMax-M2.7"
+          model_cheap: "minimax/MiniMax-M3"
+          model: "minimax/MiniMax-M3"
+          model_expensive: "minimax/MiniMax-M3"
           minimax_api_key: ${{ secrets.MINIMAX_API_KEY }}
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
           show_full_output: "true"
+          # At most 9 agent sessions run at once; extra runs queue oldest-first.
+          # The wait happens inside the action, after the branch and PR exist,
+          # so a queued run is visible in its own PR and easy to restart.
+          max_parallel_agents: "9"

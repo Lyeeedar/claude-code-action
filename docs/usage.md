@@ -89,6 +89,7 @@ jobs:
 | `path_to_bun_executable`         | Optional path to a custom Bun executable. Skips automatic Bun installation. Useful for Nix, custom containers, or specialized environments                                                                                             | No       | ""                          |
 | `plugin_marketplaces`            | Newline-separated list of Claude Code plugin marketplace Git URLs to install from (e.g., see example in workflow above). Marketplaces are added before plugin installation                                                             | No       | ""                          |
 | `plugins`                        | Newline-separated list of Claude Code plugin names to install (e.g., see example in workflow above). Plugins are installed before Claude Code execution                                                                                | No       | ""                          |
+| `max_parallel_agents`            | Cap on how many runs of this workflow may run the agent at once, to avoid tripping provider rate limits. Extra runs queue oldest-first (up to 20 minutes) after their branch and PR exist. Needs `actions: read`. `0` disables         | No       | `0`                         |
 
 ### Deprecated Inputs
 

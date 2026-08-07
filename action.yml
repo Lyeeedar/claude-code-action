@@ -176,6 +176,10 @@ inputs:
     description: "Newline-separated list of Claude Code plugin marketplace Git URLs to install from (e.g., 'https://github.com/user/marketplace1.git\nhttps://github.com/user/marketplace2.git')"
     required: false
     default: ""
+  max_parallel_agents:
+    description: "Maximum number of runs of this workflow that may run the agent at the same time, to avoid tripping provider rate limits. Extra runs queue (oldest first) until a slot frees, then give up after 20 minutes. Requires the 'actions: read' permission. '0' (default) disables the limit."
+    required: false
+    default: "0"
 
 outputs:
   conclusion:
@@ -328,6 +332,7 @@ runs:
         INCLUDE_FIX_LINKS: ${{ inputs.include_fix_links }}
         ADDITIONAL_PERMISSIONS: ${{ inputs.additional_permissions }}
         CLAUDE_ARGS: ${{ inputs.claude_args }}
+        MAX_PARALLEL_AGENTS: ${{ inputs.max_parallel_agents }}
         ALL_INPUTS: ${{ toJson(inputs) }}
 
         # Base-action inputs
