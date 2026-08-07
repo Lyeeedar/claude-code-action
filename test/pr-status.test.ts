@@ -98,6 +98,19 @@ describe("renderAgentStatus", () => {
     expect(block).toContain("elapsed 10m 0s");
   });
 
+  test("omits the token clause when the provider reported none", () => {
+    const block = renderAgentStatus({
+      phase: "running",
+      messages: 56,
+      inputTokens: 0,
+      outputTokens: 0,
+      elapsedMs: 97_000,
+    });
+    expect(block).toContain("56 messages");
+    expect(block).not.toContain("tokens in");
+    expect(block).toContain("elapsed 1m 37s");
+  });
+
   test("completed carries a done marker", () => {
     const block = renderAgentStatus({
       phase: "completed",

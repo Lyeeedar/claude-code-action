@@ -10,6 +10,11 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { ParsedSdkOptions } from "./parse-sdk-options";
 import { writeExecutionFile } from "./execution-file";
+import { findUsage, updateProgress } from "./progress-usage";
+import type {
+  ClaudeProgress,
+  ClaudeProgressCallback,
+} from "./progress-usage";
 
 export type ClaudeRunResult = {
   executionFile?: string;
@@ -18,21 +23,10 @@ export type ClaudeRunResult = {
   structuredOutput?: string;
 };
 
-/** Running totals emitted as the conversation streams in. */
-export type ClaudeProgress = {
-  messages: number;
-  inputTokens: number;
-  outputTokens: number;
-};
-
-export type ClaudeProgressCallback = (progress: ClaudeProgress) => void;
-
-type MessageUsage = {
-  input_tokens?: number | null;
-  output_tokens?: number | null;
-  cache_creation_input_tokens?: number | null;
-  cache_read_input_tokens?: number | null;
-};
+export type {
+  ClaudeProgress,
+  ClaudeProgressCallback,
+} from "./progress-usage";
 
 /** Filename for the user request file, written by prompt generation */
 const USER_REQUEST_FILENAME = "claude-user-request.txt";
@@ -208,25 +202,24 @@ export async function runClaudeWithSdk(
     inputTokens: 0,
     outputTokens: 0,
   };
+  let loggedUsageShape = false;
 
   try {
     for await (const message of query({ prompt, options: sdkOptions })) {
       messages.push(message);
 
       if (onProgress) {
-        // Conversation turns only — system/init and the final result aren't
-        // things a reader would count as messages.
-        if (message.type === "assistant" || message.type === "user") {
-          progress.messages++;
-        }
-        if (message.type === "assistant") {
-          const usage = message.message?.usage as MessageUsage | undefined;
+        updateProgress(progress, message);
+        // Log the first usage object we see. Providers disagree about where
+        // (and whether) they report tokens, so if the banner ever shows no
+        // tokens again, this line says exactly what the model sent.
+        if (!loggedUsageShape) {
+          const usage = findUsage(message);
           if (usage) {
-            progress.inputTokens +=
-              (usage.input_tokens ?? 0) +
-              (usage.cache_creation_input_tokens ?? 0) +
-              (usage.cache_read_input_tokens ?? 0);
-            progress.outputTokens += usage.output_tokens ?? 0;
+            loggedUsageShape = true;
+            console.log(
+              `[progress] token usage reported as: ${JSON.stringify(usage)}`,
+            );
           }
         }
         try {
@@ -265,6 +258,12 @@ export async function runClaudeWithSdk(
     console.error("SDK execution error:", error);
     await writeExecutionFile(messages);
     throw new Error(`SDK execution error: ${error}`);
+  }
+
+  if (onProgress && !loggedUsageShape) {
+    console.warn(
+      `[progress] No token usage was reported on any of the ${messages.length} messages — token counts will be omitted from the status banner.`,
+    );
   }
 
   const result: ClaudeRunResult = {

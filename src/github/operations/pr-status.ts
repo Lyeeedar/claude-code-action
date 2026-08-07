@@ -46,8 +46,12 @@ export function formatTokens(n: number): string {
 }
 
 function formatWork(p: AgentProgress): string {
+  const messages = `${p.messages} message${p.messages === 1 ? "" : "s"}`;
+  // Not every provider reports token usage. Saying "0 tokens" would be a
+  // claim we can't back — omit the clause rather than print a false zero.
+  if (p.inputTokens === 0 && p.outputTokens === 0) return messages;
   return (
-    `${p.messages} message${p.messages === 1 ? "" : "s"} · ` +
+    `${messages} · ` +
     `${formatTokens(p.inputTokens)} tokens in / ${formatTokens(p.outputTokens)} out`
   );
 }
