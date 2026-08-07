@@ -5,6 +5,7 @@ import {
   generatePrompt,
   generateBugWorkflowInstructions,
   classifyBugWorkflow,
+  extractReportLanguage,
   getEventTypeAndContext,
   buildAllowedToolsString,
   buildDisallowedToolsString,
@@ -1401,10 +1402,15 @@ describe("generateBugWorkflowInstructions", () => {
     },
   });
 
-  const dataWith = (title: string, labels: string[]): FetchDataResult =>
+  const dataWith = (
+    title: string,
+    labels: string[],
+    body: string = "",
+  ): FetchDataResult =>
     ({
       contextData: {
         title,
+        body,
         labels: { nodes: labels.map((name) => ({ name })) },
       },
     }) as unknown as FetchDataResult;
@@ -1447,12 +1453,62 @@ describe("generateBugWorkflowInstructions", () => {
     );
     expect(result).toContain("<localisation_bug_workflow>");
     expect(result).toContain("template.json");
-    // Localisation issues must never force a change or an auto-commit, and must
+    // CASE A (extraction) must never force a change or auto-commit, and must
     // never sweep in the other per-language translation files.
     expect(result).toContain("will NOT auto-commit for you");
     expect(result).toContain("NEVER use `git add -A`");
     expect(result).toContain("other per-language translation files");
+    // CASE B (translation improvement) edits and syncs every copy of the string.
+    expect(result).toContain("TRANSLATION IMPROVEMENT");
+    expect(result).toContain("translation-pipeline/raw");
+    expect(result).toContain("MAIN GAME translation files");
+    expect(result).toContain("kept in sync");
+    // Fix the pattern categorically, not just the one reported string.
+    expect(result).toContain("CATEGORICAL IMPROVEMENT");
+    expect(result).toContain("whack-a-mole");
     expect(result).not.toContain("<test_driven_bug_workflow>");
+  });
+
+  test("routes a translation-improvement issue with no label to the localisation flow", () => {
+    const result = generateBugWorkflowInstructions(
+      issueContext(),
+      dataWith("Improve the translation of the shop greeting", []),
+    );
+    expect(result).toContain("<localisation_bug_workflow>");
+    expect(result).toContain("TRANSLATION IMPROVEMENT");
+    expect(result).toContain("translation-pipeline/raw");
+    expect(result).not.toContain("<test_driven_bug_workflow>");
+  });
+
+  test("routes a player report on a translated build (Language field) via the body, not the title", () => {
+    // A real machine-generated player report: title is [ui], no keyword, no label.
+    const body = [
+      "Player Bug Report",
+      "Category: ui",
+      "Screen: map",
+      "Language: zh-CN",
+      "Country: IR",
+    ].join("\n");
+    const result = generateBugWorkflowInstructions(
+      issueContext(),
+      dataWith("[ui] 这里翻译的不对", [], body),
+    );
+    expect(result).toContain("<localisation_bug_workflow>");
+    // The detected locale is surfaced to the agent so it targets the right copies.
+    expect(result).toContain("zh-CN");
+    expect(result).not.toContain("<test_driven_bug_workflow>");
+  });
+
+  test("an English-language player report does NOT route to localisation", () => {
+    const body = ["Player Bug Report", "Category: ui", "Language: en"].join(
+      "\n",
+    );
+    // No bug label, English build, no keyword -> generic path (empty).
+    const result = generateBugWorkflowInstructions(
+      issueContext(),
+      dataWith("[ui] The button does nothing", [], body),
+    );
+    expect(result).toBe("");
   });
 
   test("localisation detection is case-insensitive and matches both spellings", () => {
@@ -1506,46 +1562,163 @@ describe("classifyBugWorkflow", () => {
       classifyBugWorkflow({
         isIssuesEvent: false,
         title: "localisation bug",
+        body: "Language: zh-CN",
         labels: ["bug"],
       }),
     ).toBeNull();
   });
 
-  test("returns null when the bug label is absent", () => {
+  test("returns null when nothing signals a localisation or bug issue", () => {
     expect(
       classifyBugWorkflow({
         isIssuesEvent: true,
-        title: "localisation bug",
+        title: "App crashes on launch",
+        body: "Language: en",
         labels: ["enhancement"],
       }),
     ).toBeNull();
   });
 
-  test("returns 'localisation' for a bug whose title mentions localisation", () => {
+  test("routes a player report on a translated build via the Language field (no label, no keyword)", () => {
     expect(
       classifyBugWorkflow({
         isIssuesEvent: true,
-        title: "Missing LOCALISATION for shop",
-        labels: ["Bug"],
-      }),
-    ).toBe("localisation");
-    // American spelling too.
-    expect(
-      classifyBugWorkflow({
-        isIssuesEvent: true,
-        title: "localization typo",
-        labels: ["bug"],
+        title: "[ui] 这里翻译的不对",
+        body: "Category: ui\nLanguage: zh-CN\nCountry: IR",
+        labels: [],
       }),
     ).toBe("localisation");
   });
 
-  test("returns 'test-driven' for a non-localisation bug", () => {
+  test("treats English builds as the base language (not a localisation issue)", () => {
+    expect(
+      classifyBugWorkflow({
+        isIssuesEvent: true,
+        title: "[ui] button broken",
+        body: "Category: ui\nLanguage: en-US",
+        labels: [],
+      }),
+    ).toBeNull();
+  });
+
+  test("still accepts an explicit localisation/translation title as a secondary signal", () => {
+    expect(
+      classifyBugWorkflow({
+        isIssuesEvent: true,
+        title: "Improve the German translation of the intro",
+        body: "",
+        labels: [],
+      }),
+    ).toBe("localisation");
+    expect(
+      classifyBugWorkflow({
+        isIssuesEvent: true,
+        title: "Missing LOCALISATION for shop",
+        body: "",
+        labels: ["Bug"],
+      }),
+    ).toBe("localisation");
+  });
+
+  test("returns 'test-driven' for a bug-labelled issue with no localisation signal", () => {
     expect(
       classifyBugWorkflow({
         isIssuesEvent: true,
         title: "Crash on save",
+        body: "Language: en",
         labels: ["bug"],
       }),
     ).toBe("test-driven");
+  });
+});
+
+describe("extractReportLanguage", () => {
+  test("pulls the Language field from a structured player report", () => {
+    const body = "Player Bug Report\nCategory: ui\nLanguage: zh-CN\nCountry: IR";
+    expect(extractReportLanguage(body)).toBe("zh-CN");
+  });
+
+  test("returns null when there is no Language line", () => {
+    expect(extractReportLanguage("just some free text")).toBeNull();
+  });
+});
+
+describe("prepareContext validation errors", () => {
+  const commentId = "12345";
+
+  test("throws on an unsupported event type", () => {
+    const context = createMockContext({
+      eventName: "deployment_status" as any,
+    });
+
+    expect(() => prepareContext(context, commentId)).toThrow(
+      "Unsupported event type: deployment_status",
+    );
+  });
+
+  test("pull_request event requires a PR number (isPR must be true)", () => {
+    const context = createMockContext({
+      eventName: "pull_request",
+      eventAction: "opened",
+      isPR: false,
+    });
+
+    expect(() => prepareContext(context, commentId)).toThrow(
+      "PR_NUMBER is required for pull_request event",
+    );
+  });
+
+  test("pull_request_review event requires a PR number", () => {
+    const context = createMockContext({
+      eventName: "pull_request_review",
+      isPR: false,
+      payload: {
+        review: { body: "please fix", user: { login: "user1" } },
+      } as any,
+    });
+
+    expect(() => prepareContext(context, commentId)).toThrow(
+      "PR_NUMBER is required for pull_request_review event",
+    );
+  });
+
+  test("issues event requires an event action", () => {
+    const context = createMockContext({
+      eventName: "issues",
+      eventAction: "",
+      isPR: false,
+      payload: { issue: { user: { login: "user1" } } } as any,
+    });
+
+    expect(() => prepareContext(context, commentId)).toThrow(
+      "GITHUB_EVENT_ACTION is required for issues event",
+    );
+  });
+
+  test("issues event rejects an unsupported action", () => {
+    const context = createMockContext({
+      eventName: "issues",
+      eventAction: "deleted",
+      isPR: false,
+      payload: { issue: { user: { login: "user1" } } } as any,
+    });
+
+    expect(() =>
+      prepareContext(context, commentId, "main", "claude/issue-1"),
+    ).toThrow("Unsupported issue action: deleted");
+  });
+
+  test("issue_comment on an issue requires a claude branch", () => {
+    const context = createMockContext({
+      eventName: "issue_comment",
+      isPR: false,
+      payload: {
+        comment: { id: 999, body: "@claude help", user: { login: "user1" } },
+      } as any,
+    });
+
+    expect(() => prepareContext(context, commentId)).toThrow(
+      "CLAUDE_BRANCH is required for issue_comment event",
+    );
   });
 });

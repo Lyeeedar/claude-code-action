@@ -465,13 +465,41 @@ function getCommitInstructions(
 
 export type BugWorkflow = "localisation" | "test-driven" | null;
 
+// The game's untranslated base language(s). A player report on any OTHER
+// `Language:` value is a candidate localisation/translation issue.
+const BASE_LANGUAGE_CODES = ["en", "en-us", "en-gb"];
+
+/**
+ * Extracts the `Language:` value from a structured player bug report body.
+ *
+ * Player reports include a line like `Language: zh-CN`. Returns the locale
+ * string, or null if there is no such line.
+ */
+export function extractReportLanguage(body: string): string | null {
+  const m = body.match(/^[ \t>*-]*Language:\s*([^\s]+)\s*$/im);
+  return m && m[1] ? m[1].trim() : null;
+}
+
+/** True when the report language is a translated (non-base) locale. */
+function isTranslatedLanguage(lang: string | null): boolean {
+  return !!lang && !BASE_LANGUAGE_CODES.includes(lang.toLowerCase());
+}
+
 /**
  * Classifies which bug-fixing workflow (if any) applies to an event.
  *
  * The workflow only applies to the "work the issue" events (assigned / labeled /
- * opened) — PR events and plain issue comments are excluded. Among bug-labelled
- * issues, a title mentioning localisation routes to the localisation flow;
- * everything else routes to the test-driven flow.
+ * opened) — PR events and plain issue comments are excluded.
+ *
+ * Routing:
+ *  - A structured player report whose `Language:` field is a translated (non-base)
+ *    locale routes to the localisation/translation flow — the player is on a
+ *    localised build, so their complaint may be about the translation. The title
+ *    (which is machine-generated, e.g. `[ui] …`) is not relied on; the `Language:`
+ *    field is the signal. A title explicitly mentioning localisation/translation
+ *    is accepted as a secondary signal for hand-filed issues.
+ *  - Otherwise, an issue carrying the "bug" label routes to the test-driven flow.
+ *  - Anything else is left on the generic path.
  *
  * Kept as a standalone helper so both the prompt generator and the runtime
  * (which sets CLAUDE_SKIP_FORCED_CHANGES for localisation issues) agree on the
@@ -480,34 +508,46 @@ export type BugWorkflow = "localisation" | "test-driven" | null;
 export function classifyBugWorkflow(params: {
   isIssuesEvent: boolean;
   title: string;
+  body: string;
   labels: string[];
 }): BugWorkflow {
   if (!params.isIssuesEvent) {
     return null;
   }
+  // Primary signal: a player report on a translated (non-English) build.
+  if (isTranslatedLanguage(extractReportLanguage(params.body))) {
+    return "localisation";
+  }
+  // Secondary signal: a hand-filed issue that explicitly names localisation/translation.
+  if (/locali[sz]ation|translation/i.test(params.title)) {
+    return "localisation";
+  }
+  // Every other bug is identified by the "bug" label and gets the test-driven flow.
   const hasBugLabel = params.labels.some((l) => l?.toLowerCase() === "bug");
   if (!hasBugLabel) {
     return null;
   }
-  // Accept both British ("localisation") and American ("localization") spelling.
-  return /locali[sz]ation/i.test(params.title) ? "localisation" : "test-driven";
+  return "test-driven";
 }
 
 /**
  * Builds an extra instruction block for bug-labelled issues.
  *
- * When an issue carries the "bug" label we override the generic "just implement
- * changes" guidance with a stricter, smarter workflow:
- *  - Localisation bugs (title contains "localisation"/"localization") get the
- *    template.json / extractor flow. The runtime disables the forced-change Stop
- *    hook and the forced auto-commit for these issues (see CLAUDE_SKIP_FORCED_CHANGES),
- *    so making no change / no commit is a valid outcome and nothing invalid gets
- *    swept into a commit.
- *  - Every other bug gets a test-driven flow: write a failing reproducing test
- *    first, then fix, then prove the suite is green before finishing.
+ * We override the generic "just implement changes" guidance with a stricter,
+ * smarter workflow:
+ *  - Localisation/translation issues (title mentions "localisation"/"localization"
+ *    or "translation") get the localisation/translation flow. The agent decides
+ *    from the issue text whether it is an extraction problem (string not picked up
+ *    into template.json) or a translation improvement (edit the wording of an
+ *    existing translation, kept in sync across the pipeline raw files and the main
+ *    game translation files). The runtime disables the forced-change Stop hook and
+ *    the forced auto-commit for these issues (see CLAUDE_SKIP_FORCED_CHANGES), so
+ *    making no change is a valid outcome and nothing invalid gets swept into a commit.
+ *  - Every other bug (the "bug" label) gets a test-driven flow: write a failing
+ *    reproducing test first, then fix, then prove the suite is green before finishing.
  *
- * Returns an empty string when the workflow does not apply (non-issue events,
- * or issues without the "bug" label), so it can be appended unconditionally.
+ * Returns an empty string when the workflow does not apply, so it can be appended
+ * unconditionally.
  *
  * @internal
  */
@@ -515,9 +555,11 @@ export function generateBugWorkflowInstructions(
   context: PreparedContext,
   githubData: FetchDataResult,
 ): string {
+  const body = githubData.contextData?.body ?? "";
   const workflow = classifyBugWorkflow({
     isIssuesEvent: context.eventData.eventName === "issues",
     title: githubData.contextData?.title ?? "",
+    body,
     labels: (githubData.contextData?.labels?.nodes ?? []).map(
       (l) => l?.name ?? "",
     ),
@@ -528,12 +570,21 @@ export function generateBugWorkflowInstructions(
   }
 
   if (workflow === "localisation") {
+    const reportLanguage = extractReportLanguage(body);
+    const languageLine = reportLanguage
+      ? `\nThe reporter is playing in language \`${reportLanguage}\`. The complaint (and any quoted text) is written in that language. If this is a translation problem, it is about the \`${reportLanguage}\` translation specifically — target that locale's copies. Note that the description may be non-English; read it carefully.`
+      : "";
     return `
 
 <localisation_bug_workflow>
-⚠️ FLAGGED: This bug is a LOCALISATION issue — its title contains "localisation". Handle it with the specialised workflow below, which OVERRIDES the generic "always implement changes" guidance. For localisation issues, making NO code change is a perfectly valid outcome — the system will NOT force a change and will NOT auto-commit for you, so nothing invalid gets pushed. You are responsible for making only the right, minimal change (if any) and, if you do change something, committing exactly the right files yourself. Do NOT invent a change just to have something to push; a wrong extractor edit or a regenerated translation file is worse than no change. Start by updating your GitHub comment to state clearly that this has been flagged and is being handled as a localisation issue.
+⚠️ FLAGGED: This is a LOCALISATION / TRANSLATION issue — a player reported it on a translated (non-English) build, or it explicitly mentions localisation/translation. Handle it with the specialised workflow below, which OVERRIDES the generic "always implement changes" guidance. The system will NOT force a change and will NOT auto-commit for you, so nothing invalid gets pushed — you are responsible for making only the right change (if any) and committing exactly the right files yourself. Do NOT invent a change just to have something to push. Start by updating your GitHub comment to state clearly that this has been flagged and is being handled as a localisation/translation issue.${languageLine}
 
-Follow these steps in order:
+FIRST, read the issue and decide which of these cases it is:
+  - CASE A — EXTRACTION: a user-facing string is not localised / not being picked up for translation at all.
+  - CASE B — TRANSLATION IMPROVEMENT: an existing translation's wording is wrong or poor and the issue is asking you to change the translated text itself. (This is the common case for a player report saying "the translation here is wrong".)
+  - CASE C — NOT A TRANSLATION ISSUE: after reading, this is actually a genuine functional/gameplay bug that has nothing to do with translation. Say so in your GitHub comment, then fix it like a normal bug: write a failing test that reproduces it FIRST, then fix, then get the suite green. Do NOT touch translation files.
+
+═══ CASE A — EXTRACTION ═══
 
 1. Identify the exact user-facing string that the issue reports as not localised.
 
@@ -549,6 +600,28 @@ Follow these steps in order:
    - \`template.json\`, and
    - the source file(s) you changed.
    ⚠️ Stage each file explicitly by path (e.g. \`git add template.json <source file>\`). NEVER use \`git add -A\`, \`git add .\`, or \`git commit -a\`, and NEVER commit any of the other per-language translation files (the localised copies) — re-running the extractor may have rewritten them, but they must stay out of the commit. Run \`git status\` before committing and unstage anything that is not \`template.json\` or your source change.
+
+═══ CASE B — TRANSLATION IMPROVEMENT ═══
+
+Here you DO edit the translation. The catch: the same translated string is stored in MORE THAN ONE place, and every copy MUST be kept in sync — if you change one and miss another, the game and the pipeline drift apart. There are at least two sets of files:
+  - the TRANSLATION PIPELINE RAW files under \`translation-pipeline/raw\` (the pipeline's source-of-truth copies), AND
+  - the MAIN GAME translation files (the copies the game actually loads).
+
+1. Identify the exact string / translation key the issue wants improved, and the target language(s).
+
+2. Look for the CATEGORY behind the report — do NOT just whack-a-mole the single reported string. The player pointed at one example, but the same mistranslation is often systematic. Before fixing, investigate:
+   - Is the same wrong word/term/phrase used in OTHER translations too (e.g. a term translated inconsistently, an honorific/name rendered wrong everywhere, a recurring grammatical pattern)? Grep for the specific term and for related variants, not only the exact reported sentence.
+   - If it IS a pattern, fix the whole category in this locale — apply the correct term/wording to every affected entry — so you make a CATEGORICAL IMPROVEMENT rather than leaving near-identical bugs behind.
+   - If it is genuinely a one-off, just fix that one entry. State in your GitHub comment which it was (single entry vs a pattern) and, for a pattern, list the variants you also corrected.
+
+3. Find EVERY copy of each translation you are changing:
+   - Grep for the current (bad) translated text AND for its translation key across the whole repo, including \`translation-pipeline/raw\` and the main game translation files. Do not assume there are only two — there may be more. List every file that holds a copy.
+
+4. Apply the SAME improved translation to ALL of those copies so they are byte-for-byte in sync. Do not change any unrelated entries, and do not reformat the files.
+
+5. Verify sync before committing: re-grep for the old text/term (there should be no remaining occurrences in the target locale) and confirm every copy now holds the new text. If any copy still differs, fix it before continuing.
+
+6. Commit all the edited translation files together (stage each explicitly by path — still no \`git add -A\`). The commit MUST include the \`translation-pipeline/raw\` file(s) AND the main game translation file(s); a PR that updates one set but not the other is incomplete and must not be finished. Note in your GitHub comment which files you changed so the reviewer can confirm they are all in sync.
 </localisation_bug_workflow>`;
   }
 

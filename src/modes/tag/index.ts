@@ -94,6 +94,7 @@ export async function prepareTagMode({
   const bugWorkflow = classifyBugWorkflow({
     isIssuesEvent: context.eventName === "issues",
     title: githubData.contextData?.title ?? "",
+    body: githubData.contextData?.body ?? "",
     labels: (githubData.contextData?.labels?.nodes ?? []).map(
       (l) => l?.name ?? "",
     ),
