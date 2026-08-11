@@ -8,10 +8,12 @@ import {
   formatBody,
   formatComments,
   formatReviewComments,
+  formatInlineReviewComments,
   formatChangedFilesWithSHA,
   formatLinkedIssues,
   formatLinkedPullRequests,
 } from "../github/data/formatter";
+import { isTriggerReview } from "../github/data/fetcher";
 import { sanitizeContent } from "../github/utils/sanitizer";
 import {
   isIssuesEvent,
@@ -663,6 +665,58 @@ If you cannot get the tests green, keep working. Only stop once EITHER a genuine
 </test_driven_bug_workflow>`;
 }
 
+/**
+ * Renders the inline line comments of the review that triggered this run.
+ *
+ * A submitted review splits its request across two places: the summary body and
+ * the comments pinned to individual lines. Only the summary reaches eventData;
+ * the line comments live in <review_comments>, which the prompt explicitly
+ * labels reference-only context. So on their own they never got acted on — and a
+ * review with line comments but no summary (what auto_fix_pr_reviews fires on)
+ * produced no request at all.
+ *
+ * @returns The rendered comments with a heading, or "" when the review had none
+ */
+function formatTriggerReviewInlineComments(
+  githubData: FetchDataResult,
+): string {
+  const triggerReview = (githubData.reviewData?.nodes ?? []).find((review) =>
+    isTriggerReview(review, githubData.triggerReviewId),
+  );
+  const inlineComments = formatInlineReviewComments(
+    triggerReview?.comments?.nodes,
+    githubData.imageUrlMap,
+    "",
+  );
+  if (!inlineComments) {
+    return "";
+  }
+
+  return `This review left comments on specific lines. They are part of the request - address every one:
+${inlineComments}`;
+}
+
+/**
+ * Builds the <trigger_comment> contents: the comment/review body, plus the
+ * triggering review's inline line comments when the trigger was a review.
+ */
+function buildTriggerCommentBody(
+  eventData: EventData,
+  githubData: FetchDataResult,
+): string {
+  const body =
+    "commentBody" in eventData && eventData.commentBody
+      ? sanitizeContent(eventData.commentBody)
+      : "";
+
+  if (eventData.eventName !== "pull_request_review") {
+    return body;
+  }
+
+  const inlineComments = formatTriggerReviewInlineComments(githubData);
+  return [body, inlineComments].filter(Boolean).join("\n\n");
+}
+
 export function generatePrompt(
   context: PreparedContext,
   githubData: FetchDataResult,
@@ -728,22 +782,30 @@ function generateSimplePrompt(
     ? formatChangedFilesWithSHA(changedFilesWithSHA)
     : "";
   const formattedLinkedIssues = formatLinkedIssues(linkedIssues, imageUrlMap);
-  const formattedLinkedPRs = formatLinkedPullRequests(linkedPullRequests, imageUrlMap);
+  const formattedLinkedPRs = formatLinkedPullRequests(
+    linkedPullRequests,
+    imageUrlMap,
+  );
 
   const hasImages = imageUrlMap && imageUrlMap.size > 0;
   const imagePaths = hasImages ? Array.from(imageUrlMap!.values()) : [];
   const imagesInfo = hasImages
     ? `\n\n<images_info>
 Images from comments have been downloaded and saved locally. Their local paths are shown inline in the content above.
-${process.env.MINIMAX_API_KEY ? `To understand each image, call the \`mcp__MiniMax__understand_image\` tool with \`image_source\` set to the local file path and \`prompt\` set to what you need to know. Do this BEFORE attempting to address the request.
+${
+  process.env.MINIMAX_API_KEY
+    ? `To understand each image, call the \`mcp__MiniMax__understand_image\` tool with \`image_source\` set to the local file path and \`prompt\` set to what you need to know. Do this BEFORE attempting to address the request.
 Image paths:
-${imagePaths.map((p) => `- ${p}`).join("\n")}` : "Use the Read tool to view them."}
+${imagePaths.map((p) => `- ${p}`).join("\n")}`
+    : "Use the Read tool to view them."
+}
 </images_info>`
     : "";
 
   const formattedBody = contextData?.body
     ? formatBody(contextData.body, imageUrlMap)
     : "No description provided";
+  const triggerCommentBody = buildTriggerCommentBody(eventData, githubData);
 
   const entityType = eventData.isPR ? "pull request" : "issue";
   const jobUrl = `${GITHUB_SERVER_URL}/${context.repository}/actions/runs/${process.env.GITHUB_RUN_ID}`;
@@ -773,14 +835,14 @@ ${formattedChangedFiles || "No files changed"}
 </changed_files>`
     : ""
 }${
-  formattedLinkedIssues
-    ? `\n\n<linked_issues>\n${formattedLinkedIssues}\n</linked_issues>`
-    : ""
-}${
-  formattedLinkedPRs
-    ? `\n\n<linked_pull_requests>\n${formattedLinkedPRs}\n</linked_pull_requests>`
-    : ""
-}${imagesInfo}
+    formattedLinkedIssues
+      ? `\n\n<linked_issues>\n${formattedLinkedIssues}\n</linked_issues>`
+      : ""
+  }${
+    formattedLinkedPRs
+      ? `\n\n<linked_pull_requests>\n${formattedLinkedPRs}\n</linked_pull_requests>`
+      : ""
+  }${imagesInfo}
 
 <metadata>
 repository: ${context.repository}
@@ -794,10 +856,10 @@ ${
   (eventData.eventName === "issue_comment" ||
     eventData.eventName === "pull_request_review_comment" ||
     eventData.eventName === "pull_request_review") &&
-  eventData.commentBody
+  triggerCommentBody
     ? `
 <trigger_comment>
-${sanitizeContent(eventData.commentBody)}
+${triggerCommentBody}
 </trigger_comment>`
     : ""
 }
@@ -871,7 +933,10 @@ export function generateDefaultPrompt(
     ? formatChangedFilesWithSHA(changedFilesWithSHA)
     : "";
   const formattedLinkedIssues = formatLinkedIssues(linkedIssues, imageUrlMap);
-  const formattedLinkedPRs = formatLinkedPullRequests(linkedPullRequests, imageUrlMap);
+  const formattedLinkedPRs = formatLinkedPullRequests(
+    linkedPullRequests,
+    imageUrlMap,
+  );
 
   // Check if any images were downloaded
   const hasImages = imageUrlMap && imageUrlMap.size > 0;
@@ -881,15 +946,20 @@ export function generateDefaultPrompt(
 
 <images_info>
 Images have been downloaded from GitHub comments and saved locally. Their file paths are shown inline in the content above.
-${process.env.MINIMAX_API_KEY ? `To understand each image, call the \`mcp__MiniMax__understand_image\` tool with \`image_source\` set to the local file path and \`prompt\` set to what you need to know. Do this BEFORE attempting to address the request.
+${
+  process.env.MINIMAX_API_KEY
+    ? `To understand each image, call the \`mcp__MiniMax__understand_image\` tool with \`image_source\` set to the local file path and \`prompt\` set to what you need to know. Do this BEFORE attempting to address the request.
 Image paths:
-${imagePaths.map((p) => `- ${p}`).join("\n")}` : "Use the Read tool to view them."}
+${imagePaths.map((p) => `- ${p}`).join("\n")}`
+    : "Use the Read tool to view them."
+}
 </images_info>`
     : "";
 
   const formattedBody = contextData?.body
     ? formatBody(contextData.body, imageUrlMap)
     : "No description provided";
+  const triggerCommentBody = buildTriggerCommentBody(eventData, githubData);
 
   let promptContent = `You are Claude, an AI assistant designed to help with GitHub issues and pull requests. Think carefully as you analyze the context and respond appropriately. Here's the context for your current task:
 
@@ -920,18 +990,18 @@ ${formattedChangedFiles || "No files changed"}
 </changed_files>`
     : ""
 }${
-  formattedLinkedIssues
-    ? `\n\n<linked_issues>
+    formattedLinkedIssues
+      ? `\n\n<linked_issues>
 ${formattedLinkedIssues}
 </linked_issues>`
-    : ""
-}${
-  formattedLinkedPRs
-    ? `\n\n<linked_pull_requests>
+      : ""
+  }${
+    formattedLinkedPRs
+      ? `\n\n<linked_pull_requests>
 ${formattedLinkedPRs}
 </linked_pull_requests>`
-    : ""
-}${imagesInfo}
+      : ""
+  }${imagesInfo}
 
 <event_type>${eventType}</event_type>
 <is_pr>${eventData.isPR ? "true" : "false"}</is_pr>
@@ -947,9 +1017,9 @@ ${
   (eventData.eventName === "issue_comment" ||
     eventData.eventName === "pull_request_review_comment" ||
     eventData.eventName === "pull_request_review") &&
-  eventData.commentBody
+  triggerCommentBody
     ? `<trigger_comment>
-${sanitizeContent(eventData.commentBody)}
+${triggerCommentBody}
 </trigger_comment>`
     : ""
 }
@@ -1039,7 +1109,7 @@ ${eventData.eventName === "issue_comment" || eventData.eventName === "pull_reque
    - When all todos are completed, remove the spinner and add a brief summary of what was accomplished, and what was not done.
    - Note: If you see previous Claude comments with headers like "**Claude finished @user's task**" followed by "---", do not include this in your comment. The system adds this automatically.
    - If you changed any files locally, you must update them in the remote branch via ${useCommitSigning ? "mcp__github_file_ops__commit_files" : "git commands (add, commit, push)"} before saying that you're done.
-   ${eventData.claudeBranch ? context.draftPrUrl ? `- A draft PR already exists at ${context.draftPrUrl} — include this link in your comment.\n   - ⚠️ MANDATORY: your session is not complete until you run this command to update the PR title and description:\n     gh pr edit ${context.draftPrUrl} --title "<short descriptive title (no [WIP] prefix)>" --body "<markdown: what changed, why, any caveats for the reviewer>"` : `- If you created anything in your branch, your comment must include the PR URL with prefilled title and body mentioned above.` : ""}
+   ${eventData.claudeBranch ? (context.draftPrUrl ? `- A draft PR already exists at ${context.draftPrUrl} — include this link in your comment.\n   - ⚠️ MANDATORY: your session is not complete until you run this command to update the PR title and description:\n     gh pr edit ${context.draftPrUrl} --title "<short descriptive title (no [WIP] prefix)>" --body "<markdown: what changed, why, any caveats for the reviewer>"` : `- If you created anything in your branch, your comment must include the PR URL with prefilled title and body mentioned above.`) : ""}
 
 Important Notes:
 - All communication must happen through GitHub PR comments.
@@ -1131,6 +1201,14 @@ function extractUserRequestFromContext(
 ): string | null {
   const { eventData, triggerPhrase } = context;
 
+  // The line comments of a submitted review are half of its request, and are the
+  // whole request when the review has no summary body (auto_fix_pr_reviews
+  // triggers without an @mention, so there may be no trigger phrase to extract).
+  const inlineReviewRequest =
+    eventData.eventName === "pull_request_review"
+      ? formatTriggerReviewInlineComments(githubData)
+      : "";
+
   // For comment events, extract from comment body
   if (
     "commentBody" in eventData &&
@@ -1139,7 +1217,15 @@ function extractUserRequestFromContext(
       eventData.eventName === "pull_request_review_comment" ||
       eventData.eventName === "pull_request_review")
   ) {
-    return extractUserRequest(eventData.commentBody, triggerPhrase);
+    const request = extractUserRequest(eventData.commentBody, triggerPhrase);
+    const combined = [request, inlineReviewRequest]
+      .filter(Boolean)
+      .join("\n\n");
+    if (combined) {
+      return combined;
+    }
+  } else if (inlineReviewRequest) {
+    return inlineReviewRequest;
   }
 
   // For issue/PR events triggered by body content, extract from the body

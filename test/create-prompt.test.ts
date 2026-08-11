@@ -185,6 +185,116 @@ describe("generatePrompt", () => {
     ); // from review comments
   });
 
+  test("should put the triggering review's inline comments in the trigger comment", async () => {
+    // The marked lines are half the request. Left only in <review_comments>, the
+    // prompt labels them reference-only context and Claude never acts on them.
+    const githubData: FetchDataResult = {
+      ...mockGitHubData,
+      triggerReviewId: "400002",
+      reviewData: {
+        nodes: [
+          {
+            id: "review2",
+            databaseId: "400002",
+            author: { login: "reviewer1" },
+            body: "@claude please fix these",
+            state: "CHANGES_REQUESTED",
+            submittedAt: "2023-01-01T03:00:00Z",
+            comments: {
+              nodes: [
+                {
+                  id: "rc1",
+                  databaseId: "500001",
+                  body: "This loop is off by one",
+                  author: { login: "reviewer1" },
+                  path: "src/file1.ts",
+                  line: 42,
+                  createdAt: "2023-01-01T03:00:00Z",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    } as FetchDataResult;
+
+    const envVars: PreparedContext = {
+      repository: "owner/repo",
+      claudeCommentId: "12345",
+      triggerPhrase: "@claude",
+      eventData: {
+        eventName: "pull_request_review",
+        isPR: true,
+        prNumber: "456",
+        commentBody: "@claude please fix these",
+      },
+    };
+
+    const prompt = await generatePrompt(envVars, githubData, false, "tag");
+
+    const triggerBlock = prompt.substring(
+      prompt.indexOf("<trigger_comment>"),
+      prompt.indexOf("</trigger_comment>"),
+    );
+    expect(triggerBlock).toContain("@claude please fix these");
+    expect(triggerBlock).toContain(
+      "[Comment on src/file1.ts:42]: This loop is off by one",
+    );
+  });
+
+  test("should build a trigger comment from inline comments alone when the review has no body", async () => {
+    // auto_fix_pr_reviews triggers without an @mention, so a review can carry its
+    // entire request in line comments and no summary body at all.
+    const githubData: FetchDataResult = {
+      ...mockGitHubData,
+      triggerReviewId: "400003",
+      reviewData: {
+        nodes: [
+          {
+            id: "review3",
+            databaseId: "400003",
+            author: { login: "reviewer1" },
+            body: "",
+            state: "CHANGES_REQUESTED",
+            submittedAt: "2023-01-01T03:00:00Z",
+            comments: {
+              nodes: [
+                {
+                  id: "rc2",
+                  databaseId: "500002",
+                  body: "Null check missing here",
+                  author: { login: "reviewer1" },
+                  path: "src/file1.ts",
+                  line: 7,
+                  createdAt: "2023-01-01T03:00:00Z",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    } as FetchDataResult;
+
+    const envVars: PreparedContext = {
+      repository: "owner/repo",
+      claudeCommentId: "12345",
+      triggerPhrase: "@claude",
+      eventData: {
+        eventName: "pull_request_review",
+        isPR: true,
+        prNumber: "456",
+        commentBody: "",
+      },
+    };
+
+    const prompt = await generatePrompt(envVars, githubData, false, "tag");
+
+    expect(prompt).toContain("<trigger_comment>");
+    expect(prompt).toContain(
+      "[Comment on src/file1.ts:7]: Null check missing here",
+    );
+  });
+
   test("should generate prompt for issue opened event", async () => {
     const envVars: PreparedContext = {
       repository: "owner/repo",
@@ -1634,7 +1744,8 @@ describe("classifyBugWorkflow", () => {
 
 describe("extractReportLanguage", () => {
   test("pulls the Language field from a structured player report", () => {
-    const body = "Player Bug Report\nCategory: ui\nLanguage: zh-CN\nCountry: IR";
+    const body =
+      "Player Bug Report\nCategory: ui\nLanguage: zh-CN\nCountry: IR";
     expect(extractReportLanguage(body)).toBe("zh-CN");
   });
 

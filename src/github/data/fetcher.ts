@@ -184,6 +184,52 @@ async function findIssueEventTime(
 }
 
 /**
+ * Extracts the databaseId of the review that triggered this run, if any.
+ *
+ * The triggering review — and the inline line comments hanging off it — is
+ * content the authorized trigger brought with it, so it has to be exempt from
+ * the trigger-time filters below. Those filters drop anything stamped at or
+ * after the trigger, which is exactly when the triggering review is stamped, so
+ * without an exemption the request itself gets filtered out of the prompt.
+ *
+ * @param context - Parsed GitHub context from webhook
+ * @returns The review's databaseId as a string, or undefined for non-review events
+ */
+export function extractTriggerReviewId(
+  context: ParsedGitHubContext,
+): string | undefined {
+  if (isPullRequestReviewEvent(context)) {
+    return context.payload.review.id?.toString();
+  } else if (isPullRequestReviewCommentEvent(context)) {
+    // An inline comment posted outside a formal review still belongs to an
+    // implicit COMMENTED review submitted at the same instant.
+    return context.payload.comment.pull_request_review_id?.toString();
+  }
+
+  return undefined;
+}
+
+/**
+ * Extracts the triggering review's body from the GitHub webhook payload.
+ * This is the pre-edit snapshot, mirroring extractOriginalBody: because the
+ * triggering review is now exempt from the trigger-time filter, its body must
+ * come from the payload rather than the later GraphQL read so an attacker
+ * cannot edit it into the prompt after the trigger fired.
+ *
+ * @param context - Parsed GitHub context from webhook
+ * @returns The review body ("" when the review had none), or undefined if not a review event
+ */
+export function extractOriginalReviewBody(
+  context: ParsedGitHubContext,
+): string | undefined {
+  if (isPullRequestReviewEvent(context)) {
+    return context.payload.review.body ?? "";
+  }
+
+  return undefined;
+}
+
+/**
  * Extracts the original title from the GitHub webhook payload.
  * This is the title as it existed when the trigger event occurred.
  *
@@ -272,17 +318,51 @@ export function filterCommentsToTriggerTime<
 }
 
 /**
+ * Whether this review is the one that triggered the run.
+ */
+export function isTriggerReview(
+  review: { databaseId?: string | number },
+  triggerReviewId: string | undefined,
+): boolean {
+  return (
+    triggerReviewId !== undefined &&
+    review.databaseId !== undefined &&
+    String(review.databaseId) === triggerReviewId
+  );
+}
+
+/**
  * Filters reviews to only include those that existed in their final state before the trigger time.
  * Similar to filterCommentsToTriggerTime but for GitHubReview objects which use submittedAt instead of createdAt.
+ *
+ * @param triggerReviewId - databaseId of the review that triggered this run, if
+ *   any. That review is always kept: it is stamped at the trigger time itself,
+ *   so the checks below would drop it (and the inline comments that are the
+ *   substance of the request). Its body is replaced with the webhook snapshot in
+ *   fetchGitHubData and its comments go through filterTriggerReviewComments, so
+ *   the TOCTOU protection is preserved rather than skipped.
  */
 export function filterReviewsToTriggerTime<
-  T extends { submittedAt: string; updatedAt?: string; lastEditedAt?: string },
->(reviews: T[], triggerTime: string | undefined): T[] {
+  T extends {
+    submittedAt: string;
+    updatedAt?: string;
+    lastEditedAt?: string;
+    databaseId?: string | number;
+  },
+>(
+  reviews: T[],
+  triggerTime: string | undefined,
+  triggerReviewId?: string,
+): T[] {
   if (!triggerTime) return reviews;
 
   const triggerTimestamp = new Date(triggerTime).getTime();
 
   return reviews.filter((review) => {
+    if (isTriggerReview(review, triggerReviewId)) {
+      return true;
+    }
+
     // Review must have been submitted before trigger (not at or after)
     const submittedTimestamp = new Date(review.submittedAt).getTime();
     if (submittedTimestamp >= triggerTimestamp) {
@@ -299,6 +379,36 @@ export function filterReviewsToTriggerTime<
     }
 
     return true;
+  });
+}
+
+/**
+ * Filters the inline comments belonging to the triggering review.
+ *
+ * These are created moments before (or exactly at) the trigger, so the
+ * created-before-trigger check in filterCommentsToTriggerTime would drop every
+ * one of them. What TOCTOU protection means here is narrower: reject only
+ * comments *edited* strictly after the trigger fired, since an edit is the only
+ * way content can change between the webhook and this fetch.
+ *
+ * @param comments - Inline review comments to filter
+ * @param triggerTime - ISO timestamp of when the review was submitted
+ * @returns Comments whose last edit (if any) happened at or before trigger time
+ */
+export function filterTriggerReviewComments<
+  T extends { createdAt: string; updatedAt?: string; lastEditedAt?: string },
+>(comments: T[], triggerTime: string | undefined): T[] {
+  if (!triggerTime) return comments;
+
+  const triggerTimestamp = new Date(triggerTime).getTime();
+
+  return comments.filter((comment) => {
+    // updatedAt equals createdAt for an unedited comment, so an unedited comment
+    // always passes; lastEditedAt is null until the first edit.
+    const lastEditTime = comment.lastEditedAt || comment.updatedAt;
+    if (!lastEditTime) return true;
+
+    return new Date(lastEditTime).getTime() <= triggerTimestamp;
   });
 }
 
@@ -373,6 +483,8 @@ type FetchDataParams = {
   triggerTime?: string;
   originalTitle?: string;
   originalBody?: string | null;
+  triggerReviewId?: string;
+  originalReviewBody?: string;
   includeCommentsByActor?: string;
   excludeCommentsByActor?: string;
 };
@@ -389,6 +501,13 @@ export type FetchDataResult = {
   reviewData: { nodes: GitHubReview[] } | null;
   imageUrlMap: Map<string, string>;
   triggerDisplayName?: string | null;
+  /**
+   * databaseId of the review that triggered this run, so prompt construction can
+   * pull that review's inline line comments into the request itself instead of
+   * leaving them buried in <review_comments> (which the prompt labels as
+   * reference-only context).
+   */
+  triggerReviewId?: string;
   // Optional so fixtures (including upstream's, which don't know about these
   // fork-only fields) can build a FetchDataResult without them. fetchGitHubData
   // always populates both; consumers default to [].
@@ -405,6 +524,8 @@ export async function fetchGitHubData({
   triggerTime,
   originalTitle,
   originalBody,
+  triggerReviewId,
+  originalReviewBody,
   includeCommentsByActor,
   excludeCommentsByActor,
 }: FetchDataParams): Promise<FetchDataResult> {
@@ -454,7 +575,9 @@ export async function fetchGitHubData({
 
         console.log(`Successfully fetched PR #${prNumber} data`);
         if (linkedIssues.length > 0) {
-          console.log(`Found ${linkedIssues.length} linked issue(s): ${linkedIssues.map((i) => `#${i.number}`).join(", ")}`);
+          console.log(
+            `Found ${linkedIssues.length} linked issue(s): ${linkedIssues.map((i) => `#${i.number}`).join(", ")}`,
+          );
         }
       } else {
         throw new Error(`PR #${prNumber} not found`);
@@ -484,11 +607,15 @@ export async function fetchGitHubData({
         // Extract linked PRs from cross-reference timeline events
         linkedPullRequests = (contextData.timelineItems?.nodes ?? [])
           .map((n) => n.source)
-          .filter((s): s is LinkedPullRequest => s != null && "baseRefName" in s);
+          .filter(
+            (s): s is LinkedPullRequest => s != null && "baseRefName" in s,
+          );
 
         console.log(`Successfully fetched issue #${prNumber} data`);
         if (linkedPullRequests.length > 0) {
-          console.log(`Found ${linkedPullRequests.length} linked PR(s): ${linkedPullRequests.map((p) => `#${p.number}`).join(", ")}`);
+          console.log(
+            `Found ${linkedPullRequests.length} linked PR(s): ${linkedPullRequests.map((p) => `#${p.number}`).join(", ")}`,
+          );
         }
       } else {
         throw new Error(`Issue #${prNumber} not found`);
@@ -547,19 +674,37 @@ export async function fetchGitHubData({
   // cannot inject content into the prompt after an authorized trigger. Without
   // it, review bodies and inline review comments would reach the prompt
   // verbatim regardless of when they landed.
+  // The one exception is the review that triggered this run: it is stamped at
+  // the trigger time, so the filters would drop the very request Claude was
+  // asked to act on. It is kept, with its body taken from the webhook payload
+  // and its comments checked for post-trigger edits instead.
   if (reviewData && reviewData.nodes) {
     // Drop reviews submitted or edited after the trigger, then filter by actor.
     reviewData.nodes = filterCommentsByActor(
-      filterReviewsToTriggerTime(reviewData.nodes, triggerTime),
+      filterReviewsToTriggerTime(
+        reviewData.nodes,
+        triggerTime,
+        triggerReviewId,
+      ),
       includeCommentsByActor,
       excludeCommentsByActor,
     );
 
     // Apply the same trigger-time + actor filtering to inline review comments.
     reviewData.nodes.forEach((review) => {
+      const triggeringReview = isTriggerReview(review, triggerReviewId);
+
+      // Prefer the webhook snapshot of the triggering review's body over the
+      // GraphQL read, which may already include a post-trigger edit.
+      if (triggeringReview && originalReviewBody !== undefined) {
+        review.body = originalReviewBody;
+      }
+
       if (review.comments?.nodes) {
         review.comments.nodes = filterCommentsByActor(
-          filterCommentsToTriggerTime(review.comments.nodes, triggerTime),
+          triggeringReview
+            ? filterTriggerReviewComments(review.comments.nodes, triggerTime)
+            : filterCommentsToTriggerTime(review.comments.nodes, triggerTime),
           includeCommentsByActor,
           excludeCommentsByActor,
         );
@@ -626,19 +771,39 @@ export async function fetchGitHubData({
   }
 
   // Include linked issue/PR bodies and comments in image processing
-  const linkedIssueContent: CommentWithImages[] = linkedIssues.flatMap((issue) => [
-    { type: "issue_body" as const, issueNumber: String(issue.number), body: issue.body },
-    ...issue.comments.nodes
-      .filter((c) => c.body && !c.isMinimized)
-      .map((c) => ({ type: "issue_comment" as const, id: c.databaseId, body: c.body })),
-  ]);
+  const linkedIssueContent: CommentWithImages[] = linkedIssues.flatMap(
+    (issue) => [
+      {
+        type: "issue_body" as const,
+        issueNumber: String(issue.number),
+        body: issue.body,
+      },
+      ...issue.comments.nodes
+        .filter((c) => c.body && !c.isMinimized)
+        .map((c) => ({
+          type: "issue_comment" as const,
+          id: c.databaseId,
+          body: c.body,
+        })),
+    ],
+  );
 
-  const linkedPRContent: CommentWithImages[] = linkedPullRequests.flatMap((pr) => [
-    { type: "pr_body" as const, pullNumber: String(pr.number), body: pr.body },
-    ...pr.comments.nodes
-      .filter((c) => c.body && !c.isMinimized)
-      .map((c) => ({ type: "issue_comment" as const, id: c.databaseId, body: c.body })),
-  ]);
+  const linkedPRContent: CommentWithImages[] = linkedPullRequests.flatMap(
+    (pr) => [
+      {
+        type: "pr_body" as const,
+        pullNumber: String(pr.number),
+        body: pr.body,
+      },
+      ...pr.comments.nodes
+        .filter((c) => c.body && !c.isMinimized)
+        .map((c) => ({
+          type: "issue_comment" as const,
+          id: c.databaseId,
+          body: c.body,
+        })),
+    ],
+  );
 
   const allComments = [
     ...mainBody,
@@ -675,6 +840,7 @@ export async function fetchGitHubData({
     reviewData,
     imageUrlMap,
     triggerDisplayName,
+    triggerReviewId,
     linkedIssues,
     linkedPullRequests,
   };

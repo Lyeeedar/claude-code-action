@@ -480,6 +480,7 @@ export const mockPullRequestReviewCommentContext: ParsedGitHubContext = {
     action: "created",
     comment: {
       id: 99988877,
+      pull_request_review_id: 55566677,
       body: "/claude is this the most efficient way to implement this algorithm?",
       user: {
         login: "code-reviewer",

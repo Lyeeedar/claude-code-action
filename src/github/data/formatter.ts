@@ -4,6 +4,7 @@ import type {
   GitHubComment,
   GitHubFile,
   GitHubReview,
+  GitHubReviewComment,
   LinkedIssue,
   LinkedPullRequest,
 } from "../types";
@@ -78,6 +79,42 @@ export function formatComments(
     .join("\n\n");
 }
 
+/**
+ * Renders inline (line-anchored) review comments, one per line, each tagged with
+ * the file and line it was left on.
+ *
+ * @param indent - Prefix for each line. formatReviewComments nests these under a
+ *   review header so it indents; the prompt's trigger block shows them on their
+ *   own and passes "".
+ */
+export function formatInlineReviewComments(
+  comments: GitHubReviewComment[] | undefined,
+  imageUrlMap?: Map<string, string>,
+  indent: string = "  ",
+): string {
+  return (comments ?? [])
+    .filter((comment) => !comment.isMinimized)
+    .map((comment) => {
+      let body = comment.body;
+
+      if (imageUrlMap) {
+        for (const [originalUrl, localPath] of imageUrlMap) {
+          body = body.replaceAll(originalUrl, localPath);
+        }
+      }
+
+      body = sanitizeContent(body);
+
+      let formatted = `${indent}[Comment on ${comment.path}:${comment.line || "?"}]: ${body}`;
+      if (comment.diffHunk) {
+        const diffHunk = sanitizeContent(comment.diffHunk);
+        formatted += `\n${indent}Diff context:\n\`\`\`diff\n${diffHunk}\n\`\`\``;
+      }
+      return formatted;
+    })
+    .join("\n");
+}
+
 export function formatReviewComments(
   reviewData: { nodes: GitHubReview[] } | null,
   imageUrlMap?: Map<string, string>,
@@ -107,31 +144,10 @@ export function formatReviewComments(
       review.comments.nodes &&
       review.comments.nodes.length > 0
     ) {
-      const comments = review.comments.nodes
-        .filter((comment) => !comment.isMinimized)
-        .map((comment) => {
-          let body = comment.body;
-
-          if (imageUrlMap) {
-            for (const [originalUrl, localPath] of imageUrlMap) {
-              body = body.replaceAll(originalUrl, localPath);
-            }
-          }
-
-          body = sanitizeContent(body);
-
-          let formatted = `  [Comment on ${comment.path}:${comment.line || "?"}]: ${body}`;
-
-          // The diff hunk is the code the comment was left on. Without it the
-          // comment arrives without the context it was written against.
-          if (comment.diffHunk) {
-            const diffHunk = sanitizeContent(comment.diffHunk);
-            formatted += `\n  Diff context:\n\`\`\`diff\n${diffHunk}\n\`\`\``;
-          }
-
-          return formatted;
-        })
-        .join("\n");
+      const comments = formatInlineReviewComments(
+        review.comments.nodes,
+        imageUrlMap,
+      );
       if (comments) {
         reviewOutput += `\n${comments}`;
       }

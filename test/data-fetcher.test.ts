@@ -4,9 +4,12 @@ import {
   resolveTriggerTimestamp,
   extractOriginalTitle,
   extractOriginalBody,
+  extractTriggerReviewId,
+  extractOriginalReviewBody,
   fetchGitHubData,
   filterCommentsToTriggerTime,
   filterReviewsToTriggerTime,
+  filterTriggerReviewComments,
   isBodySafeToUse,
 } from "../src/github/data/fetcher";
 import type { ParsedGitHubContext } from "../src/github/context";
@@ -740,6 +743,44 @@ describe("filterReviewsToTriggerTime", () => {
     });
   });
 
+  describe("triggering review exemption", () => {
+    // A review is stamped at the moment it triggers the run, so without the
+    // exemption the request Claude was asked to act on filters itself out.
+    const createIdentifiedReview = (
+      databaseId: string,
+      submittedAt: string,
+      updatedAt?: string,
+    ): GitHubReview => ({
+      ...createMockReview(submittedAt, updatedAt),
+      databaseId,
+    });
+
+    it("should keep the triggering review submitted exactly at trigger time", () => {
+      const review = createIdentifiedReview("777", triggerTime, triggerTime);
+
+      const filtered = filterReviewsToTriggerTime([review], triggerTime, "777");
+      expect(filtered.length).toBe(1);
+      expect(filtered[0]?.databaseId).toBe("777");
+    });
+
+    it("should still exclude other reviews submitted at or after trigger time", () => {
+      const reviews = [
+        createIdentifiedReview("777", triggerTime, triggerTime),
+        createIdentifiedReview("888", triggerTime, triggerTime),
+        createIdentifiedReview("999", "2024-01-15T13:00:00Z"),
+      ];
+
+      const filtered = filterReviewsToTriggerTime(reviews, triggerTime, "777");
+      expect(filtered.map((r) => r.databaseId)).toEqual(["777"]);
+    });
+
+    it("should not exempt anything when no triggerReviewId is given", () => {
+      const review = createIdentifiedReview("777", triggerTime);
+
+      expect(filterReviewsToTriggerTime([review], triggerTime).length).toBe(0);
+    });
+  });
+
   describe("edge cases", () => {
     it("should return all reviews when no trigger time provided", () => {
       const reviews = [
@@ -885,6 +926,105 @@ describe("isBodySafeToUse", () => {
       );
       expect(isBodySafeToUse(contextData, "2024-01-15T12:00:00Z")).toBe(true);
     });
+  });
+});
+
+describe("filterTriggerReviewComments", () => {
+  const triggerTime = "2024-01-15T12:00:00Z";
+
+  const createMockReviewComment = (
+    createdAt: string,
+    updatedAt?: string,
+    lastEditedAt?: string,
+  ) => ({
+    id: "c1",
+    databaseId: "c1",
+    body: "Rename this",
+    author: { login: "reviewer" },
+    path: "src/index.ts",
+    line: 42,
+    createdAt,
+    updatedAt,
+    lastEditedAt,
+  });
+
+  it("should keep unedited comments created at trigger time", () => {
+    // The line comments of the triggering review are stamped at the trigger, so
+    // the created-before-trigger rule would drop every one of them.
+    const comments = [
+      createMockReviewComment(triggerTime, triggerTime),
+      createMockReviewComment("2024-01-15T11:59:00Z", "2024-01-15T11:59:00Z"),
+    ];
+
+    expect(filterTriggerReviewComments(comments, triggerTime).length).toBe(2);
+  });
+
+  it("should keep comments with no edit timestamps", () => {
+    const comments = [createMockReviewComment(triggerTime)];
+    expect(filterTriggerReviewComments(comments, triggerTime).length).toBe(1);
+  });
+
+  it("should drop comments edited after the trigger", () => {
+    const comments = [
+      createMockReviewComment(triggerTime, "2024-01-15T12:05:00Z"),
+      createMockReviewComment(triggerTime, triggerTime, "2024-01-15T12:05:00Z"),
+    ];
+
+    expect(filterTriggerReviewComments(comments, triggerTime).length).toBe(0);
+  });
+
+  it("should prioritize lastEditedAt over updatedAt", () => {
+    const comments = [
+      createMockReviewComment(
+        triggerTime,
+        "2024-01-15T13:00:00Z", // updatedAt after trigger
+        "2024-01-15T11:00:00Z", // lastEditedAt before trigger
+      ),
+    ];
+
+    expect(filterTriggerReviewComments(comments, triggerTime).length).toBe(1);
+  });
+
+  it("should return all comments when no trigger time provided", () => {
+    const comments = [createMockReviewComment("2024-01-15T13:00:00Z")];
+    expect(filterTriggerReviewComments(comments, undefined).length).toBe(1);
+  });
+});
+
+describe("extractTriggerReviewId", () => {
+  it("should extract the review id from PullRequestReviewEvent", () => {
+    expect(extractTriggerReviewId(mockPullRequestReviewContext)).toBe(
+      "11122233",
+    );
+  });
+
+  it("should extract the parent review id from PullRequestReviewCommentEvent", () => {
+    expect(extractTriggerReviewId(mockPullRequestReviewCommentContext)).toBe(
+      "55566677",
+    );
+  });
+
+  it("should return undefined for non-review events", () => {
+    expect(extractTriggerReviewId(mockIssueCommentContext)).toBeUndefined();
+    expect(extractTriggerReviewId(mockIssueOpenedContext)).toBeUndefined();
+    expect(
+      extractTriggerReviewId(mockPullRequestOpenedContext),
+    ).toBeUndefined();
+  });
+});
+
+describe("extractOriginalReviewBody", () => {
+  it("should extract the review body from PullRequestReviewEvent", () => {
+    expect(extractOriginalReviewBody(mockPullRequestReviewContext)).toBe(
+      "@claude can you check if the error handling is comprehensive enough in this PR?",
+    );
+  });
+
+  it("should return undefined for non-review events", () => {
+    expect(
+      extractOriginalReviewBody(mockPullRequestReviewCommentContext),
+    ).toBeUndefined();
+    expect(extractOriginalReviewBody(mockIssueCommentContext)).toBeUndefined();
   });
 });
 
@@ -1109,6 +1249,139 @@ describe("fetchGitHubData integration with time filtering", () => {
       key.startsWith("review_body"),
     );
     expect(reviewsInMap.length).toBeLessThanOrEqual(1);
+  });
+
+  it("should keep the triggering review and its inline comments", async () => {
+    // Regression: a submitted review is stamped at the trigger time, so the
+    // trigger-time filter dropped the review AND the line comments that are the
+    // substance of the request - the agent re-triggered with nothing to act on.
+    const triggerTime = "2024-01-15T12:00:00Z";
+    const mockOctokits = {
+      graphql: jest.fn().mockResolvedValue({
+        repository: {
+          pullRequest: {
+            number: 456,
+            title: "Test PR",
+            body: "PR body",
+            author: { login: "author" },
+            comments: { nodes: [] },
+            files: { nodes: [] },
+            reviews: {
+              nodes: [
+                {
+                  id: "R1",
+                  databaseId: "555",
+                  author: { login: "reviewer" },
+                  body: "Please fix these",
+                  state: "CHANGES_REQUESTED",
+                  submittedAt: triggerTime,
+                  updatedAt: triggerTime,
+                  comments: {
+                    nodes: [
+                      {
+                        id: "C1",
+                        databaseId: "c1",
+                        body: "This is off by one",
+                        author: { login: "reviewer" },
+                        path: "src/index.ts",
+                        line: 42,
+                        createdAt: triggerTime,
+                        updatedAt: triggerTime,
+                      },
+                      {
+                        id: "C2",
+                        databaseId: "c2",
+                        body: "Edited into the prompt after the trigger",
+                        author: { login: "reviewer" },
+                        path: "src/other.ts",
+                        line: 7,
+                        createdAt: triggerTime,
+                        updatedAt: "2024-01-15T12:10:00Z",
+                        lastEditedAt: "2024-01-15T12:10:00Z",
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+        user: { login: "trigger-user" },
+      }),
+      rest: {
+        pulls: { listFiles: jest.fn().mockResolvedValue({ data: [] }) },
+      },
+    };
+
+    const result = await fetchGitHubData({
+      octokits: mockOctokits as any,
+      repository: "test-owner/test-repo",
+      prNumber: "456",
+      isPR: true,
+      triggerUsername: "reviewer",
+      triggerTime,
+      triggerReviewId: "555",
+      originalReviewBody: "Please fix these",
+    });
+
+    expect(result.reviewData?.nodes?.length).toBe(1);
+    expect(result.triggerReviewId).toBe("555");
+
+    // The inline comments survive, minus the one edited after the trigger.
+    const inline = result.reviewData?.nodes?.[0]?.comments?.nodes ?? [];
+    expect(inline.length).toBe(1);
+    expect(inline[0]?.body).toBe("This is off by one");
+    expect(inline[0]?.path).toBe("src/index.ts");
+  });
+
+  it("should use the webhook body for the triggering review, not a post-trigger edit", async () => {
+    const triggerTime = "2024-01-15T12:00:00Z";
+    const mockOctokits = {
+      graphql: jest.fn().mockResolvedValue({
+        repository: {
+          pullRequest: {
+            number: 456,
+            title: "Test PR",
+            body: "PR body",
+            author: { login: "author" },
+            comments: { nodes: [] },
+            files: { nodes: [] },
+            reviews: {
+              nodes: [
+                {
+                  id: "R1",
+                  databaseId: "555",
+                  author: { login: "reviewer" },
+                  body: "Injected after the trigger",
+                  state: "CHANGES_REQUESTED",
+                  submittedAt: triggerTime,
+                  updatedAt: "2024-01-15T12:10:00Z",
+                  lastEditedAt: "2024-01-15T12:10:00Z",
+                  comments: { nodes: [] },
+                },
+              ],
+            },
+          },
+        },
+        user: { login: "trigger-user" },
+      }),
+      rest: {
+        pulls: { listFiles: jest.fn().mockResolvedValue({ data: [] }) },
+      },
+    };
+
+    const result = await fetchGitHubData({
+      octokits: mockOctokits as any,
+      repository: "test-owner/test-repo",
+      prNumber: "456",
+      isPR: true,
+      triggerUsername: "reviewer",
+      triggerTime,
+      triggerReviewId: "555",
+      originalReviewBody: "Original review body",
+    });
+
+    expect(result.reviewData?.nodes?.[0]?.body).toBe("Original review body");
   });
 
   it("should filter review comments based on trigger time", async () => {

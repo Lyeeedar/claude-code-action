@@ -13,6 +13,8 @@ import {
   resolveTriggerTimestamp,
   extractOriginalTitle,
   extractOriginalBody,
+  extractTriggerReviewId,
+  extractOriginalReviewBody,
 } from "../../github/data/fetcher";
 import { createPrompt, classifyBugWorkflow } from "../../create-prompt";
 import { isEntityContext } from "../../github/context";
@@ -72,6 +74,8 @@ export async function prepareTagMode({
   const triggerTime = await resolveTriggerTimestamp(context, octokit);
   const originalTitle = extractOriginalTitle(context);
   const originalBody = extractOriginalBody(context);
+  const triggerReviewId = extractTriggerReviewId(context);
+  const originalReviewBody = extractOriginalReviewBody(context);
 
   const githubData = await fetchGitHubData({
     octokits: octokit,
@@ -82,6 +86,8 @@ export async function prepareTagMode({
     triggerTime,
     originalTitle,
     originalBody,
+    triggerReviewId,
+    originalReviewBody,
     includeCommentsByActor: context.inputs.includeCommentsByActor,
     excludeCommentsByActor: context.inputs.excludeCommentsByActor,
   });
