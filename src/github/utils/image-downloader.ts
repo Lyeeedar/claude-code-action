@@ -338,7 +338,9 @@ export async function downloadCommentImages(
 }
 
 async function fetchImage(url: string, timeoutMs: number): Promise<Buffer> {
-  const controller = new AbortController();
+  // Bun provides the web AbortController at runtime. Cast here because the
+  // Node/Bun ambient declarations merge it to an empty interface on Windows.
+  const controller = new (globalThis.AbortController as any)();
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutHandle = setTimeout(() => {
