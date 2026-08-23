@@ -189,4 +189,16 @@ describe("setupClaudeCodeSettings", () => {
       expect(commands.length).toBeGreaterThan(0);
     });
   });
+
+  test("injects the code comment policy Stop hook", async () => {
+    await setupClaudeCodeSettings(undefined, testHomeDir);
+    const settings = JSON.parse(await readFile(settingsPath, "utf-8"));
+    const commands = ((settings.hooks?.Stop ?? []) as any[])
+      .flatMap((hook) => hook.hooks ?? [])
+      .map((hook) => hook.command as string);
+
+    expect(
+      commands.some((command) => command.includes("comment-policy.ts")),
+    ).toBe(true);
+  });
 });

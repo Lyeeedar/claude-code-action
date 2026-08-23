@@ -869,6 +869,8 @@ Your request is in <trigger_comment> above${eventData.eventName === "issues" ? `
 Decide what's being asked:
 1. **Question or code review** - Answer or review ONLY. Do NOT edit, commit, push, or create branches unless the trigger explicitly asks for a code change.
 2. **Code change** - Implement the change, commit, and push
+
+Code comment policy for changes: each comment must contain at most two sentences, and comment-only lines must be no more than 5% of non-blank added source lines. A blocking check enforces this across the diff.
 ${
   eventData.isPR && eventData.baseBranch
     ? `
@@ -1029,6 +1031,7 @@ Your task is to analyze the context, understand the request, and provide helpful
 
 IMPORTANT CLARIFICATIONS:
 - Your job is ALWAYS to implement changes. Never write a code review or provide review feedback instead of making changes.${eventData.isPR && eventData.baseBranch ? `\n- When comparing PR changes, use 'origin/${eventData.baseBranch}' as the base reference (NOT 'main' or 'master')` : ""}
+- Keep code comments concise: each comment may contain at most two sentences, and comment-only lines may be no more than 5% of non-blank added source lines. A blocking check enforces this across the diff.
 - Your console outputs and tool results are NOT visible to the user
 - ALL communication happens through your GitHub comment - that's how users see your feedback, answers, and progress. your normal responses are not seen.
 

@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { homedir } from "os";
 import { readFile } from "fs/promises";
+import { join } from "path";
 
 export async function setupClaudeCodeSettings(
   settingsInput?: string,
@@ -130,6 +131,26 @@ export async function setupClaudeCodeSettings(
     hooks.Stop = [...(hooks.Stop ?? []), stopHook];
     settings.hooks = hooks;
     console.log(`Injected Stop hook for npm run lint`);
+  }
+
+  // Enforce concise code comments across the complete PR diff. This is a Stop
+  // hook (rather than prompt-only guidance), so Claude cannot finish with a PR
+  // whose added comments exceed the policy.
+  {
+    const checkerPath = join(import.meta.dir, "comment-policy.ts");
+    const stopHook = {
+      hooks: [
+        {
+          type: "command",
+          command: `bun ${JSON.stringify(checkerPath)}`,
+          statusMessage: "Checking code comment limits...",
+        },
+      ],
+    };
+    const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
+    hooks.Stop = [...(hooks.Stop ?? []), stopHook];
+    settings.hooks = hooks;
+    console.log(`Injected Stop hook to enforce code comment limits`);
   }
 
   // Inject a Stop hook that checks the tracking comment for unchecked checkboxes.

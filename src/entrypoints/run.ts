@@ -571,6 +571,9 @@ async function run() {
     if (claudeBranch) {
       process.env.CLAUDE_BRANCH = claudeBranch;
     }
+    if (baseBranch) {
+      process.env.CLAUDE_BASE_BRANCH = baseBranch;
+    }
 
     // Expose the tracking comment ID so the Stop hook can check for unchecked items.
     if (commentId) {
