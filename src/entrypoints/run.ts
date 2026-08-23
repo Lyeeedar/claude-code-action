@@ -53,6 +53,10 @@ import { redactSecrets } from "../github/utils/sanitizer";
 // Base-action imports (used directly instead of subprocess)
 import { validateEnvironmentVariables } from "../../base-action/src/validate-env";
 import { setupClaudeCodeSettings } from "../../base-action/src/setup-claude-code-settings";
+import {
+  formatCommentPolicyViolations,
+  runCommentPolicyCheck,
+} from "../../base-action/src/comment-policy";
 import { installPlugins } from "../../base-action/src/install-plugins";
 import { preparePrompt } from "../../base-action/src/prepare-prompt";
 import { runClaude } from "../../base-action/src/run-claude";
@@ -420,6 +424,7 @@ async function run() {
   };
   let agentStartedAt: number | undefined;
   let runError: string | undefined;
+  let commentPolicyPassed = false;
   try {
     // Phase 1: Prepare
     const actionInputsPresent = collectActionInputsPresence();
@@ -657,6 +662,7 @@ async function run() {
         : "";
 
     const agentTeamNote = "\n\nCRITICAL INSTRUCTION — MANDATORY FIRST ACTION: Your very first tool call MUST be TeamCreate. Do not read any files, do not analyse anything, do not call any other tool first. Call TeamCreate immediately.\n\nHow to structure the team:\n1. Read the task description only (no file exploration yet)\n2. Call TeamCreate with teammates tailored to the specific aspects of this task:\n   - One teammate per distinct area of the codebase or concern the task touches (e.g. if the task involves UI rendering, game state logic, and save/load — that is three separate teammates, each with a focused brief)\n   - One quality-control teammate: their ONLY job is to scrutinise the work done by other teammates for bugs, edge cases, missed requirements, and integration issues\n   - One reviewer teammate: reads the final diff with fresh eyes, challenges every decision, and must explicitly sign off before the lead finishes\n3. Give each teammate a specific, detailed brief — not generic instructions\n4. Use SendMessage to have teammates share findings with each other and with you\n5. Wait for ALL teammates to report back and for the reviewer to sign off before finishing\n6. To shut down: call requestShutdown on EVERY active member simultaneously (do not wait for their responses), then immediately call TeamDelete. If TeamDelete returns an error about active members, call it once more and then proceed regardless — do NOT wait or retry further.\n\nFailure to call TeamCreate as your first action is a critical error. There are no exceptions.";
+    const codeCommentPolicyNote = "\n\nCRITICAL CODE COMMENT POLICY: Every code comment you add must contain at most two sentences. Comment-only lines must be no more than 5% of all non-blank source lines added in the complete diff. Do not use comments to restate the issue, narrate the implementation, or document test scenarios; make the code self-explanatory instead. This is enforced before commits and pushes.";
 
     // Restore prior conversation so the agent has full context for follow-up requests.
     // Not used for schedule mode (each run is independent).
@@ -774,7 +780,7 @@ async function run() {
         promptConfig.path,
         {
           claudeArgs: claudeArgsWithMode,
-          appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote || undefined,
+          appendSystemPrompt: (process.env.APPEND_SYSTEM_PROMPT ?? "") + toolNamingNote + agentTeamNote + codeCommentPolicyNote || undefined,
           model: process.env.ANTHROPIC_MODEL,
           pathToClaudeCodeExecutable: claudeExecutable,
           showFullOutput: process.env.INPUT_SHOW_FULL_OUTPUT,
@@ -798,6 +804,17 @@ async function run() {
     claudeSuccess = claudeResult.conclusion === "success";
     executionFile = claudeResult.executionFile;
     claudeSessionId = claudeResult.sessionId;
+
+    commentPolicyPassed = false;
+    const commentPolicyViolations = runCommentPolicyCheck(
+      process.env.GITHUB_WORKSPACE || process.cwd(),
+    );
+    if (commentPolicyViolations.length > 0) {
+      throw new Error(
+        formatCommentPolicyViolations(commentPolicyViolations),
+      );
+    }
+    commentPolicyPassed = true;
 
     // Run post-steps for schedule mode (always, regardless of Claude's conclusion)
     if (
@@ -892,7 +909,7 @@ async function run() {
 
     // Stage, commit, and push any work Claude left behind.
     // Must be in finally so it runs even if runClaude threw an exception.
-    if (claudeBranch) {
+    if (claudeBranch && commentPolicyPassed) {
       try {
         const workspace = process.env.GITHUB_WORKSPACE || process.cwd();
         const status = execSync("git status --porcelain", { cwd: workspace, encoding: "utf-8" }).trim();
@@ -915,6 +932,8 @@ async function run() {
       } catch (err) {
         console.warn(`Post-run commit/push failed (non-fatal): ${err}`);
       }
+    } else if (claudeBranch) {
+      console.error("Skipping final commit and push because the code comment policy failed");
     }
 
     // Persist session so follow-up triggers can resume the same conversation.

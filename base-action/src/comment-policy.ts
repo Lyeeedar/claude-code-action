@@ -174,7 +174,7 @@ export function checkCommentPolicy(
       current = undefined;
     }
 
-    if (trimmed.includes("/*") && !trimmed.includes("*/")) {
+    if (/^\/\*/.test(trimmed) && !trimmed.includes("*/")) {
       inBlockComment = true;
     }
     if (inBlockComment && trimmed.includes("*/")) {
@@ -211,11 +211,10 @@ function git(args: string[], cwd: string): string {
 }
 
 function findBaseRef(cwd: string): string | undefined {
+  const baseBranch = process.env.CLAUDE_BASE_BRANCH || process.env.BASE_BRANCH;
   const candidates = [
-    process.env.CLAUDE_BASE_BRANCH
-      ? `origin/${process.env.CLAUDE_BASE_BRANCH}`
-      : undefined,
-    process.env.CLAUDE_BASE_BRANCH,
+    baseBranch ? `origin/${baseBranch}` : undefined,
+    baseBranch,
     process.env.CLAUDE_INITIAL_HEAD,
   ].filter((value): value is string => Boolean(value));
 
@@ -257,18 +256,22 @@ export function runCommentPolicyCheck(cwd: string): CommentPolicyViolation[] {
   return checkCommentPolicy(addedLines);
 }
 
+export function formatCommentPolicyViolations(
+  violations: CommentPolicyViolation[],
+): string {
+  const details = violations.map(({ message }) => `- ${message}`).join("\n");
+  return `Code comment policy failed. Remove or shorten comments before finishing:\n\n${details}`;
+}
+
 if (import.meta.main) {
   try {
     const cwd = process.env.GITHUB_WORKSPACE || process.cwd();
     const violations = runCommentPolicyCheck(cwd);
     if (violations.length > 0) {
-      const details = violations
-        .map(({ message }) => `- ${message}`)
-        .join("\n");
       console.log(
         JSON.stringify({
           decision: "block",
-          reason: `Code comment policy failed. Remove or shorten comments before finishing:\n\n${details}`,
+          reason: formatCommentPolicyViolations(violations),
         }),
       );
     }

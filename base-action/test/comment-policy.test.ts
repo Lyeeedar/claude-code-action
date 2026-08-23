@@ -80,6 +80,36 @@ describe("code comment policy", () => {
     ).toBe(true);
   });
 
+  test("rejects an issue narrative prepended to a new test file", () => {
+    const lines = parseAddedLines(
+      [
+        "diff --git a/src/example.issue8955.test.ts b/src/example.issue8955.test.ts",
+        "--- /dev/null",
+        "+++ b/src/example.issue8955.test.ts",
+        "@@ -0,0 +1,108 @@",
+        "+/**",
+        "+ * Regression tests for issue #8955. This restates the reported bug.",
+        "+ * It then narrates the internal state that caused it.",
+        "+ *",
+        "+ * The next paragraphs document the implementation in excessive detail.",
+        ...Array.from({ length: 20 }, () => "+ * More narrative text"),
+        "+ */",
+        ...Array.from(
+          { length: 82 },
+          (_, index) => `+const value${index} = ${index};`,
+        ),
+      ].join("\n"),
+    );
+
+    const violations = checkCommentPolicy(lines);
+    expect(
+      violations.some(({ message }) => message.includes("24.1% comments")),
+    ).toBe(true);
+    expect(
+      violations.some(({ message }) => message.includes("4 sentences")),
+    ).toBe(true);
+  });
+
   test("blocks comments above five percent of added source lines", () => {
     const violations = checkCommentPolicy(
       addedSourceLines("// Concise explanation.", 18),
@@ -114,6 +144,22 @@ describe("code comment policy", () => {
         "+++ b/example.c",
         "@@ -0,0 +1,1 @@",
         "+#include <stdio.h>",
+      ].join("\n"),
+    );
+
+    expect(checkCommentPolicy(lines)).toEqual([]);
+  });
+
+  test("does not treat comment delimiters inside strings as comments", () => {
+    const lines = parseAddedLines(
+      [
+        "diff --git a/example.ts b/example.ts",
+        "--- a/example.ts",
+        "+++ b/example.ts",
+        "@@ -0,0 +1,3 @@",
+        '+const opener = "/**";',
+        '+const text = "This is code, not a comment.";',
+        '+const closer = "*/";',
       ].join("\n"),
     );
 

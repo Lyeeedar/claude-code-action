@@ -33,4 +33,16 @@ if [[ "$REF" != "HEAD" ]] && ! git check-ref-format --branch "$REF" >/dev/null 2
   exit 1
 fi
 
+# A Stop hook is advisory until Claude tries to finish. Enforce the comment
+# policy here as well so a violating commit cannot reach the remote first.
+POLICY_CHECKER="${GITHUB_ACTION_PATH:?GITHUB_ACTION_PATH is required}/base-action/src/comment-policy.ts"
+if ! POLICY_OUTPUT="$(bun "$POLICY_CHECKER")"; then
+  echo "Error: code comment policy check could not run" >&2
+  exit 1
+fi
+if [[ -n "$POLICY_OUTPUT" ]]; then
+  echo "$POLICY_OUTPUT" >&2
+  exit 1
+fi
+
 exec git push origin "$REF"

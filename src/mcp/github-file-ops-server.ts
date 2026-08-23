@@ -11,6 +11,10 @@ import { GITHUB_API_URL } from "../github/api/config";
 import { isBinaryContent } from "./binary-detection";
 import { validatePathWithinRepo } from "./path-validation";
 import { updateGitReference } from "./update-git-reference";
+import {
+  formatCommentPolicyViolations,
+  runCommentPolicyCheck,
+} from "../../base-action/src/comment-policy";
 
 type GitHubRef = {
   object: {
@@ -227,6 +231,11 @@ server.tool(
           return { fullPath, relativePath };
         }),
       );
+
+      const commentPolicyViolations = runCommentPolicyCheck(REPO_DIR);
+      if (commentPolicyViolations.length > 0) {
+        throw new Error(formatCommentPolicyViolations(commentPolicyViolations));
+      }
 
       // 1. Get the branch reference (create if doesn't exist)
       const baseSha = await getOrCreateBranchRef(
