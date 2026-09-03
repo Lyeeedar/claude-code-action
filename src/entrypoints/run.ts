@@ -637,11 +637,10 @@ async function run() {
     const memsearchMarketplace = "https://github.com/zilliztech/memsearch.git";
     const userMarketplaces = process.env.INPUT_PLUGIN_MARKETPLACES || "";
     const userPlugins = process.env.INPUT_PLUGINS || "";
-    await installPlugins(
-      [memsearchMarketplace, userMarketplaces].filter(Boolean).join("\n"),
-      ["memsearch", userPlugins].filter(Boolean).join("\n"),
-      claudeExecutable,
-    );
+    await installPlugins(memsearchMarketplace, "memsearch", claudeExecutable, {
+      anonymousGit: true,
+    });
+    await installPlugins(userMarketplaces, userPlugins, claudeExecutable);
 
     const promptFile =
       process.env.INPUT_PROMPT_FILE ||

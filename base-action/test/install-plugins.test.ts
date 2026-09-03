@@ -597,6 +597,55 @@ describe("installPlugins", () => {
     );
   });
 
+  test("should isolate anonymous marketplace installs from GitHub credentials", async () => {
+    const spy = createMockSpawn();
+    const originalGitConfigCount = process.env.GIT_CONFIG_COUNT;
+    const originalGhToken = process.env.GH_TOKEN;
+    const originalGitHubToken = process.env.GITHUB_TOKEN;
+    const originalGitAskpass = process.env.GIT_ASKPASS;
+    const originalSshAskpass = process.env.SSH_ASKPASS;
+    process.env.GIT_CONFIG_COUNT = "1";
+    process.env.GH_TOKEN = "repo-scoped-token";
+    process.env.GITHUB_TOKEN = "workflow-token";
+    process.env.GIT_ASKPASS = "git-askpass";
+    process.env.SSH_ASKPASS = "ssh-askpass";
+
+    try {
+      await installPlugins(
+        "https://github.com/zilliztech/memsearch.git",
+        "memsearch",
+        undefined,
+        { anonymousGit: true },
+      );
+    } finally {
+      if (originalGitConfigCount === undefined)
+        delete process.env.GIT_CONFIG_COUNT;
+      else process.env.GIT_CONFIG_COUNT = originalGitConfigCount;
+      if (originalGhToken === undefined) delete process.env.GH_TOKEN;
+      else process.env.GH_TOKEN = originalGhToken;
+      if (originalGitHubToken === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = originalGitHubToken;
+      if (originalGitAskpass === undefined) delete process.env.GIT_ASKPASS;
+      else process.env.GIT_ASKPASS = originalGitAskpass;
+      if (originalSshAskpass === undefined) delete process.env.SSH_ASKPASS;
+      else process.env.SSH_ASKPASS = originalSshAskpass;
+    }
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    const marketplaceOptions = spy.mock.calls[0]?.[2] as {
+      env: NodeJS.ProcessEnv;
+    };
+    expect(marketplaceOptions.env.GIT_CONFIG_COUNT).toBe("2");
+    expect(marketplaceOptions.env.GIT_CONFIG_KEY_1).toBe("credential.helper");
+    expect(marketplaceOptions.env.GIT_CONFIG_VALUE_1).toBe("");
+    expect(marketplaceOptions.env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(marketplaceOptions.env.GCM_INTERACTIVE).toBe("Never");
+    expect(marketplaceOptions.env.GH_TOKEN).toBeUndefined();
+    expect(marketplaceOptions.env.GITHUB_TOKEN).toBeUndefined();
+    expect(marketplaceOptions.env.GIT_ASKPASS).toBeUndefined();
+    expect(marketplaceOptions.env.SSH_ASKPASS).toBeUndefined();
+  });
+
   // Local marketplace path tests
   test("should accept local marketplace path with ./", async () => {
     const spy = createMockSpawn();

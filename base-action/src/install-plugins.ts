@@ -7,6 +7,33 @@ const PATH_TRAVERSAL_REGEX =
 const MARKETPLACE_URL_REGEX =
   /^https:\/\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]+\.git$/;
 
+type InstallPluginsOptions = {
+  anonymousGit?: boolean;
+};
+
+function createCommandEnv(
+  options?: InstallPluginsOptions,
+): NodeJS.ProcessEnv | undefined {
+  if (!options?.anonymousGit) return undefined;
+
+  const env = { ...process.env };
+  const configuredCount = Number.parseInt(env.GIT_CONFIG_COUNT || "0", 10);
+  const configIndex =
+    Number.isSafeInteger(configuredCount) && configuredCount >= 0
+      ? configuredCount
+      : 0;
+  env.GIT_CONFIG_COUNT = String(configIndex + 1);
+  env[`GIT_CONFIG_KEY_${configIndex}`] = "credential.helper";
+  env[`GIT_CONFIG_VALUE_${configIndex}`] = "";
+  env.GIT_TERMINAL_PROMPT = "0";
+  env.GCM_INTERACTIVE = "Never";
+  delete env.GH_TOKEN;
+  delete env.GITHUB_TOKEN;
+  delete env.GIT_ASKPASS;
+  delete env.SSH_ASKPASS;
+  return env;
+}
+
 /**
  * Checks if a marketplace input is a local path (not a URL)
  * @param input - The marketplace input to check
@@ -139,10 +166,12 @@ async function executeClaudeCommand(
   claudeExecutable: string,
   args: string[],
   errorContext: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const childProcess: ChildProcess = spawn(claudeExecutable, args, {
       stdio: "inherit",
+      ...(env ? { env } : {}),
     });
 
     childProcess.on("close", (code: number | null) => {
@@ -171,6 +200,7 @@ async function executeClaudeCommand(
 async function installPlugin(
   pluginName: string,
   claudeExecutable: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<void> {
   console.log(`Installing plugin: ${pluginName}`);
 
@@ -178,6 +208,7 @@ async function installPlugin(
     claudeExecutable,
     ["plugin", "install", pluginName],
     `Failed to install plugin '${pluginName}'`,
+    env,
   );
 }
 
@@ -191,6 +222,7 @@ async function installPlugin(
 async function addMarketplace(
   claudeExecutable: string,
   marketplace: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<void> {
   console.log(`Adding marketplace: ${marketplace}`);
 
@@ -198,6 +230,7 @@ async function addMarketplace(
     claudeExecutable,
     ["plugin", "marketplace", "add", marketplace],
     `Failed to add marketplace '${marketplace}'`,
+    env,
   );
 }
 
@@ -206,6 +239,7 @@ async function addMarketplace(
  * @param marketplacesInput - Newline-separated list of marketplace Git URLs or local paths
  * @param pluginsInput - Newline-separated list of plugin names
  * @param claudeExecutable - Path to the Claude executable (defaults to "claude")
+ * @param options - Optional command isolation settings
  * @returns Promise that resolves when all plugins are installed
  * @throws {Error} If any plugin fails validation or installation (stops on first error)
  */
@@ -213,9 +247,11 @@ export async function installPlugins(
   marketplacesInput?: string,
   pluginsInput?: string,
   claudeExecutable?: string,
+  options?: InstallPluginsOptions,
 ): Promise<void> {
   // Resolve executable path with explicit fallback
   const resolvedExecutable = claudeExecutable || "claude";
+  const commandEnv = createCommandEnv(options);
 
   // Parse and add all marketplaces before installing plugins
   const marketplaces = parseMarketplaces(marketplacesInput);
@@ -223,7 +259,7 @@ export async function installPlugins(
   if (marketplaces.length > 0) {
     console.log(`Adding ${marketplaces.length} marketplace(s)...`);
     for (const marketplace of marketplaces) {
-      await addMarketplace(resolvedExecutable, marketplace);
+      await addMarketplace(resolvedExecutable, marketplace, commandEnv);
       console.log(`✓ Successfully added marketplace: ${marketplace}`);
     }
   } else {
@@ -234,7 +270,7 @@ export async function installPlugins(
   if (plugins.length > 0) {
     console.log(`Installing ${plugins.length} plugin(s)...`);
     for (const plugin of plugins) {
-      await installPlugin(plugin, resolvedExecutable);
+      await installPlugin(plugin, resolvedExecutable, commandEnv);
       console.log(`✓ Successfully installed: ${plugin}`);
     }
   } else {
