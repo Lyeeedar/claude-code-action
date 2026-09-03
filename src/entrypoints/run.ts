@@ -33,7 +33,6 @@ import { prepareScheduleMode, runPostSteps, saveAgentState } from "../modes/sche
 import { checkContainsTrigger } from "../github/validation/trigger";
 import { restoreConfigFromBase } from "../github/operations/restore-config";
 import { loadSessionState, saveSessionState } from "../github/operations/session-state";
-import { restoreMemoryFiles, saveMemoryStore, updateMemoryIssue } from "../github/operations/memory-store";
 import { validateBranchName } from "../github/operations/branch";
 import {
   waitForAgentSlot,
@@ -634,13 +633,11 @@ async function run() {
 
     await setupClaudeCodeSettings(process.env.INPUT_SETTINGS);
 
-    const memsearchMarketplace = "https://github.com/zilliztech/memsearch.git";
-    const userMarketplaces = process.env.INPUT_PLUGIN_MARKETPLACES || "";
-    const userPlugins = process.env.INPUT_PLUGINS || "";
-    await installPlugins(memsearchMarketplace, "memsearch", claudeExecutable, {
-      anonymousGit: true,
-    });
-    await installPlugins(userMarketplaces, userPlugins, claudeExecutable);
+    await installPlugins(
+      process.env.INPUT_PLUGIN_MARKETPLACES,
+      process.env.INPUT_PLUGINS,
+      claudeExecutable,
+    );
 
     const promptFile =
       process.env.INPUT_PROMPT_FILE ||
@@ -694,34 +691,6 @@ async function run() {
 
     // Install workspace deps up front so the lint Stop hook has node_modules.
     await ensureWorkspaceNodeModules(workspace);
-
-    // Restore persisted memory files so the memsearch plugin can find them.
-    // The plugin's hooks handle indexing, search injection, and saving new memories.
-    try {
-      await restoreMemoryFiles(workspace);
-    } catch (err) {
-      console.warn(`[memory] Restore failed (non-fatal): ${err}`);
-    }
-
-    // Write memsearch config before Claude starts so the SessionStart hook
-    // picks up OpenAI embeddings instead of downloading the 558MB ONNX model.
-    if (process.env.OPENAI_API_KEY) {
-      try {
-        const memsearchConfigDir = `${process.env.HOME}/.memsearch`;
-        await import("fs/promises").then(({ mkdir, writeFile }) =>
-          mkdir(memsearchConfigDir, { recursive: true }).then(() =>
-            writeFile(
-              `${memsearchConfigDir}/config.toml`,
-              `[embedding]\nprovider = "openai"\nmodel = "text-embedding-3-small"\n`,
-              "utf-8",
-            )
-          )
-        );
-        console.log("[memory] Configured memsearch to use OpenAI embeddings");
-      } catch (err) {
-        console.warn(`[memory] Could not write memsearch config (non-fatal): ${err}`);
-      }
-    }
 
     // Pre-index the codebase with code-graph for enhanced semantic search during the run.
     // Fire-and-forget — if it finishes during the agent run, great; if not, no harm done.
@@ -950,20 +919,6 @@ async function run() {
       } catch (err) {
         console.warn(`Could not save session state: ${err}`);
       }
-    }
-
-    // Commit new memory markdown files to the shared claude-memory branch.
-    try {
-      const ws = process.env.GITHUB_WORKSPACE || process.cwd();
-      await saveMemoryStore(ws);
-      // Update the persistent memory issue so memories are visible in GitHub UI.
-      if (octokit && context) {
-        const owner = context.repository.owner;
-        const repo  = context.repository.repo;
-        await updateMemoryIssue(octokit, owner, repo, ws);
-      }
-    } catch (err) {
-      console.warn(`[memory] Save/issue update failed (non-fatal): ${err}`);
     }
 
     // Remove [WIP] from every PR we marked in-progress this run.
